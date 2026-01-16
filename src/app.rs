@@ -168,14 +168,14 @@ impl AppState {
         profile_index: usize,
         updated: ProfileConfig,
     ) {
-        if let Some(target) = self.targets.get_mut(target_index)
-            && let Some(profile) = target.profiles.get_mut(profile_index)
-        {
-            profile.config = updated.clone();
-            let _ = profile
-                .worker
-                .sender
-                .send(ControlMessage::UpdateProfile(Box::new(updated)));
+        if let Some(target) = self.targets.get_mut(target_index) {
+            if let Some(profile) = target.profiles.get_mut(profile_index) {
+                profile.config = updated.clone();
+                let _ = profile
+                    .worker
+                    .sender
+                    .send(ControlMessage::UpdateProfile(Box::new(updated)));
+            }
         }
     }
 

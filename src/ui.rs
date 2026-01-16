@@ -75,23 +75,23 @@ pub fn run_ui(
 
         let tick_rate = Duration::from_secs_f64(1.0 / app.global.ui_refresh_hz as f64);
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)?
-            && let Event::Key(key) = event::read()?
-        {
-            match input_mode {
-                InputMode::Normal => {
-                    if handle_normal_key(key, &mut app, &mut input_mode, &mut input_buffer) {
-                        should_quit = true;
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                match input_mode {
+                    InputMode::Normal => {
+                        if handle_normal_key(key, &mut app, &mut input_mode, &mut input_buffer) {
+                            should_quit = true;
+                        }
                     }
-                }
-                _ => {
-                    handle_input_key(
-                        key,
-                        &mut app,
-                        &mut input_mode,
-                        &mut input_buffer,
-                        &sample_tx,
-                    );
+                    _ => {
+                        handle_input_key(
+                            key,
+                            &mut app,
+                            &mut input_mode,
+                            &mut input_buffer,
+                            &sample_tx,
+                        );
+                    }
                 }
             }
         }
@@ -159,10 +159,11 @@ fn handle_normal_key(
             app.selected_target = app.selected_target.saturating_sub(1);
         }
         KeyCode::Tab => {
-            if let Some(target) = app.selected_target_mut()
-                && !target.profiles.is_empty()
-            {
-                target.selected_profile = (target.selected_profile + 1) % target.profiles.len();
+            if let Some(target) = app.selected_target_mut() {
+                if !target.profiles.is_empty() {
+                    target.selected_profile =
+                        (target.selected_profile + 1) % target.profiles.len();
+                }
             }
         }
         KeyCode::Char('1') => app.toggle_metric(MetricKind::Total),
@@ -198,10 +199,10 @@ fn handle_input_key(
                     }
                 }
                 InputMode::EditTarget => {
-                    if let Some(target) = app.selected_target()
-                        && let Some(updated) = apply_edit_command(target, input_buffer)
-                    {
-                        app.update_target_config(app.selected_target, updated);
+                    if let Some(target) = app.selected_target() {
+                        if let Some(updated) = apply_edit_command(target, input_buffer) {
+                            app.update_target_config(app.selected_target, updated);
+                        }
                     }
                 }
                 InputMode::Normal => {}

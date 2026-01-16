@@ -109,12 +109,13 @@ impl MetricsStore {
 
         if let Some(samples) = self.samples.get(&key) {
             for sample in samples.iter().filter(|s| s.ts >= cutoff) {
-                if let ProbeResult::Ok = sample.result
-                    && let Some(value) = sample_metric(sample, metric, link_capacity_mbps)
-                    && let Ok(age) = SystemTime::now().duration_since(sample.ts)
-                {
-                    let x = (window_seconds - age.as_secs_f64()).max(0.0);
-                    points.push((x, value));
+                if let ProbeResult::Ok = sample.result {
+                    if let Some(value) = sample_metric(sample, metric, link_capacity_mbps) {
+                        if let Ok(age) = SystemTime::now().duration_since(sample.ts) {
+                            let x = (window_seconds - age.as_secs_f64()).max(0.0);
+                            points.push((x, value));
+                        }
+                    }
                 }
             }
         }

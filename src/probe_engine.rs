@@ -97,34 +97,35 @@ impl ProbeClient {
             let _ = self.easy.http_headers(list);
         }
 
-        if !target.dns_enabled
-            && let Some(ip) = resolved_ip
-            && let Some(host) = target.url.host_str()
-        {
-            let port = target.url.port_or_known_default().unwrap_or_else(|| {
-                if target.url.scheme() == "https" {
-                    443
-                } else {
-                    80
+        if !target.dns_enabled {
+            if let Some(ip) = resolved_ip {
+                if let Some(host) = target.url.host_str() {
+                    let port = target.url.port_or_known_default().unwrap_or_else(|| {
+                        if target.url.scheme() == "https" {
+                            443
+                        } else {
+                            80
+                        }
+                    });
+                    let mut list = List::new();
+                    let entry = format!("{host}:{port}:{ip}");
+                    let _ = list.append(&entry);
+                    let _ = self.easy.resolve(list);
                 }
-            });
-            let mut list = List::new();
-            let entry = format!("{host}:{port}:{ip}");
-            let _ = list.append(&entry);
-            let _ = self.easy.resolve(list);
+            }
         }
 
         let mut probe_result = ProbeResult::Ok;
         let perform_result = self.easy.perform();
 
         let http_status = self.easy.response_code().ok().map(|code| code as u16);
-        if let Some(status) = http_status
-            && status >= 400
-        {
-            probe_result = ProbeResult::Err(ProbeError {
-                kind: ProbeErrorKind::HttpStatusError,
-                message: format!("HTTP status {status}"),
-            });
+        if let Some(status) = http_status {
+            if status >= 400 {
+                probe_result = ProbeResult::Err(ProbeError {
+                    kind: ProbeErrorKind::HttpStatusError,
+                    message: format!("HTTP status {status}"),
+                });
+            }
         }
 
         if let Err(err) = perform_result {
