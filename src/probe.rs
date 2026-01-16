@@ -49,6 +49,29 @@ pub enum ProbeErrorKind {
     IoError,
 }
 
+impl ProbeErrorKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ProbeErrorKind::DnsTimeout => "dns_timeout",
+            ProbeErrorKind::DnsNxDomain => "dns_nxdomain",
+            ProbeErrorKind::DnsServFail => "dns_servfail",
+            ProbeErrorKind::DnsOther => "dns_other",
+            ProbeErrorKind::ConnectTimeout => "connect_timeout",
+            ProbeErrorKind::ConnectRefused => "connect_refused",
+            ProbeErrorKind::ConnectNoRoute => "connect_no_route",
+            ProbeErrorKind::ConnectOther => "connect_other",
+            ProbeErrorKind::TlsHandshakeFailed => "tls_handshake_failed",
+            ProbeErrorKind::TlsVersionMismatch => "tls_version_mismatch",
+            ProbeErrorKind::AlpnFailed => "alpn_failed",
+            ProbeErrorKind::HttpTimeout => "http_timeout",
+            ProbeErrorKind::HttpProtocolError => "http_protocol_error",
+            ProbeErrorKind::HttpStatusError => "http_status_error",
+            ProbeErrorKind::ReadTimeout => "read_timeout",
+            ProbeErrorKind::IoError => "io_error",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProbeError {
     pub kind: ProbeErrorKind,

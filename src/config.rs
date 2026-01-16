@@ -16,6 +16,24 @@ pub struct GlobalConfig {
     pub ebpf_mode: EbpfMode,
 }
 
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        Self {
+            ui_refresh_hz: 10,
+            default_window: WindowSpec::M15,
+            windows: vec![
+                WindowSpec::M1,
+                WindowSpec::M5,
+                WindowSpec::M15,
+                WindowSpec::H1,
+            ],
+            link_capacity_mbps: None,
+            ebpf_enabled: false,
+            ebpf_mode: EbpfMode::Off,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TargetConfig {
     pub id: TargetId,
@@ -27,6 +45,22 @@ pub struct TargetConfig {
     pub timeout_breakdown: Option<TimeoutBreakdown>,
     pub profiles: Vec<ProfileConfig>,
     pub sampling: SamplingConfig,
+}
+
+impl TargetConfig {
+    pub fn new(url: Url, profiles: Vec<ProfileConfig>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            url,
+            enabled: true,
+            dns_enabled: true,
+            interval: Duration::from_secs(5),
+            timeout_total: Duration::from_secs(10),
+            timeout_breakdown: None,
+            profiles,
+            sampling: SamplingConfig::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -41,7 +75,50 @@ pub struct ProfileConfig {
     pub headers: Vec<(String, SecretString)>,
 }
 
-#[derive(Clone, Debug)]
+impl ProfileConfig {
+    pub fn new(
+        name: impl Into<String>,
+        http: HttpVersion,
+        tls: TlsVersion,
+        conn_reuse: ConnReusePolicy,
+        method: ProbeMethod,
+        max_read_bytes: u32,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            http,
+            tls,
+            conn_reuse,
+            method,
+            max_read_bytes,
+            headers: Vec::new(),
+        }
+    }
+}
+
+pub fn default_profiles() -> Vec<ProfileConfig> {
+    vec![
+        ProfileConfig::new(
+            "h2+tls13+warm",
+            HttpVersion::H2,
+            TlsVersion::Tls13,
+            ConnReusePolicy::Warm,
+            ProbeMethod::Get,
+            4096,
+        ),
+        ProfileConfig::new(
+            "h1+tls12+cold",
+            HttpVersion::H1,
+            TlsVersion::Tls12,
+            ConnReusePolicy::Cold,
+            ProbeMethod::Get,
+            4096,
+        ),
+    ]
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct TimeoutBreakdown {
     pub dns: Duration,
     pub connect: Duration,
@@ -56,6 +133,15 @@ pub struct SamplingConfig {
     pub histogram: HistogramConfig,
 }
 
+impl Default for SamplingConfig {
+    fn default() -> Self {
+        Self {
+            max_points_per_window: 1024,
+            histogram: HistogramConfig::default(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistogramConfig {
     pub latency_low_ms: u64,
@@ -63,35 +149,91 @@ pub struct HistogramConfig {
     pub sigfig: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl Default for HistogramConfig {
+    fn default() -> Self {
+        Self {
+            latency_low_ms: 1,
+            latency_high_ms: 60_000,
+            sigfig: 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HttpVersion {
     H1,
     H2,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl fmt::Display for HttpVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HttpVersion::H1 => f.write_str("h1"),
+            HttpVersion::H2 => f.write_str("h2"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TlsVersion {
     Tls12,
     Tls13,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl fmt::Display for TlsVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TlsVersion::Tls12 => f.write_str("tls12"),
+            TlsVersion::Tls13 => f.write_str("tls13"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConnReusePolicy {
     Warm,
     Cold,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl fmt::Display for ConnReusePolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnReusePolicy::Warm => f.write_str("warm"),
+            ConnReusePolicy::Cold => f.write_str("cold"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProbeMethod {
     Head,
     Get,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl fmt::Display for ProbeMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProbeMethod::Head => f.write_str("head"),
+            ProbeMethod::Get => f.write_str("get"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EbpfMode {
     Off,
     Minimal,
     Full,
+}
+
+impl fmt::Display for EbpfMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EbpfMode::Off => f.write_str("off"),
+            EbpfMode::Minimal => f.write_str("minimal"),
+            EbpfMode::Full => f.write_str("full"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
