@@ -3,7 +3,9 @@ use crate::probe::{
     EbpfConnStatsDelta, NegotiatedProtocol, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample,
     TcpInfoSnapshot,
 };
-use curl::easy::{Easy2, Handler, HttpVersion as CurlHttpVersion, List, SslVersion, WriteError};
+use curl::easy::{
+    Easy2, Handler, HttpVersion as CurlHttpVersion, IpResolve, List, SslVersion, WriteError,
+};
 use curl::Error as CurlError;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
@@ -25,27 +27,37 @@ impl BodyCollector {
 
 impl Handler for BodyCollector {
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        let max_len = if self.limit > 0 {
-            let remaining = self.limit.saturating_sub(self.bytes);
-            (data.len() as u64).min(remaining) as usize
+        let len = data.len() as u64;
+        let take = if self.limit == 0 {
+            len
         } else {
-            data.len()
+            let remaining = self.limit.saturating_sub(self.bytes);
+            len.min(remaining)
         };
 
-        if max_len < data.len() {
+        self.bytes = self.bytes.saturating_add(take);
+        if self.limit > 0 && self.bytes >= self.limit {
             self.limit_reached = true;
         }
 
-        self.bytes = self.bytes.saturating_add(max_len as u64);
+        Ok(data.len())
+    }
+
+    fn progress(&mut self, _dltotal: f64, dlnow: f64, _ultotal: f64, _ulnow: f64) -> bool {
+        if self.limit == 0 {
+            return true;
+        }
 
         if self.limit_reached {
-            // Returning an error aborts the transfer. This is what we want.
-            // A non-zero length here would be strange, so we return an error value
-            // that is not a valid length.
-            Err(WriteError::Pause)
-        } else {
-            Ok(data.len())
+            return false;
         }
+
+        if dlnow >= self.limit as f64 {
+            self.limit_reached = true;
+            return false;
+        }
+
+        true
     }
 }
 
@@ -67,14 +79,53 @@ impl ProbeClient {
         profile: &ProfileConfig,
         resolved_ip: Option<IpAddr>,
     ) -> ProbeSample {
+        let host_is_ip = target
+            .url
+            .host_str()
+            .and_then(|host| host.parse::<IpAddr>().ok())
+            .is_some();
+        let retry_on_dns_timeout = target.dns_enabled && !host_is_ip;
+
+        let ip_modes = [IpResolve::Any, IpResolve::V4];
+        let ip_modes = if retry_on_dns_timeout {
+            &ip_modes[..]
+        } else {
+            &ip_modes[..1]
+        };
+
+        let mut last_sample = None;
+        for (index, ip_mode) in ip_modes.iter().enumerate() {
+            let (sample, dns_timeout) = self.probe_once(target, profile, resolved_ip, *ip_mode);
+            let should_retry = dns_timeout && index + 1 < ip_modes.len();
+            if should_retry {
+                last_sample = Some(sample);
+                continue;
+            }
+            return sample;
+        }
+
+        last_sample.expect("probe attempts should return a sample")
+    }
+
+    fn probe_once(
+        &mut self,
+        target: &TargetConfig,
+        profile: &ProfileConfig,
+        resolved_ip: Option<IpAddr>,
+        ip_resolve: IpResolve,
+    ) -> (ProbeSample, bool) {
         let start_ts = SystemTime::now();
         let read_limit = if profile.method == crate::config::ProbeMethod::Head {
             0
         } else {
             profile.max_read_bytes as u64
         };
-        self.easy.get_mut().reset(read_limit);
         self.easy.reset();
+        self.easy.get_mut().reset(read_limit);
+        let _ = self.easy.follow_location(false);
+        let _ = self.easy.accept_encoding("");
+        let _ = self.easy.progress(true);
+        let _ = self.easy.ip_resolve(ip_resolve);
 
         let url = target.url.as_str();
         let _ = self.easy.url(url);
@@ -142,6 +193,13 @@ impl ProbeClient {
         let mut probe_result = ProbeResult::Ok;
         let perform_result = self.easy.perform();
         let was_aborted_by_limit = self.easy.get_ref().limit_reached;
+        let mut dns_timeout = false;
+
+        if let Err(err) = &perform_result {
+            if err.is_operation_timedout() {
+                dns_timeout = is_dns_timeout_message(&err.to_string());
+            }
+        }
 
         let http_status = self.easy.response_code().ok().map(|code| code as u16);
         if let Some(status) = http_status {
@@ -153,12 +211,15 @@ impl ProbeClient {
             }
         }
 
+        let mut aborted_by_limit = false;
         if let Err(err) = perform_result {
-            // If the transfer was aborted intentionally by our write callback, it's not a probe error.
-            if !(was_aborted_by_limit && err.is_write_error()) {
+            aborted_by_limit =
+                was_aborted_by_limit && (err.is_write_error() || err.is_aborted_by_callback());
+            if !aborted_by_limit {
                 probe_result = ProbeResult::Err(map_curl_error(&err));
             }
         }
+        let dns_timeout = dns_timeout && !aborted_by_limit;
 
         let t_total = self.easy.total_time().unwrap_or_default();
         let t_dns_raw = self.easy.namelookup_time().unwrap_or_default();
@@ -197,7 +258,7 @@ impl ProbeClient {
 
         let tcp_info = fetch_tcp_info(self.easy.raw());
 
-        ProbeSample {
+        let sample = ProbeSample {
             ts: start_ts,
             target_id: target.id,
             profile_id: profile.id,
@@ -219,7 +280,9 @@ impl ProbeClient {
             remote,
             tcp_info,
             ebpf: None::<EbpfConnStatsDelta>,
-        }
+        };
+
+        (sample, dns_timeout)
     }
 }
 
@@ -248,6 +311,10 @@ fn map_curl_error(err: &CurlError) -> ProbeError {
         kind,
         message: err.to_string(),
     }
+}
+
+fn is_dns_timeout_message(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("resolving timed out")
 }
 
 // fn fetch_negotiated_protocol(handle: *mut curl_sys::CURL) -> NegotiatedProtocol {
@@ -349,5 +416,77 @@ fn fetch_tcp_info(handle: *mut curl_sys::CURL) -> Option<TcpInfoSnapshot> {
             snd_cwnd: Some(info.tcpi_snd_cwnd),
             snd_ssthresh: Some(info.tcpi_snd_ssthresh),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BodyCollector;
+    use curl::easy::Handler;
+
+    #[test]
+    fn body_collector_no_limit_counts_bytes() {
+        let mut collector = BodyCollector::default();
+        collector.reset(0);
+        let data = vec![0u8; 8];
+        let wrote = collector.write(&data).expect("write");
+        assert_eq!(wrote, data.len());
+        assert_eq!(collector.bytes, 8);
+        assert!(!collector.limit_reached);
+    }
+
+    #[test]
+    fn body_collector_caps_bytes_when_limit_hit() {
+        let mut collector = BodyCollector::default();
+        collector.reset(5);
+        let data = vec![0u8; 10];
+        let wrote = collector.write(&data).expect("write");
+        assert_eq!(wrote, data.len());
+        assert_eq!(collector.bytes, 5);
+        assert!(collector.limit_reached);
+    }
+
+    #[test]
+    fn body_collector_caps_bytes_after_partial() {
+        let mut collector = BodyCollector::default();
+        collector.reset(5);
+        let first = vec![0u8; 3];
+        let wrote_first = collector.write(&first).expect("write");
+        assert_eq!(wrote_first, 3);
+        assert_eq!(collector.bytes, 3);
+        assert!(!collector.limit_reached);
+
+        let second = vec![0u8; 4];
+        let wrote_second = collector.write(&second).expect("write");
+        assert_eq!(wrote_second, second.len());
+        assert_eq!(collector.bytes, 5);
+        assert!(collector.limit_reached);
+    }
+
+    #[test]
+    fn body_collector_progress_aborts_after_limit() {
+        let mut collector = BodyCollector::default();
+        collector.reset(5);
+        let data = vec![0u8; 5];
+        let _ = collector.write(&data).expect("write");
+        assert!(collector.limit_reached);
+        assert!(!collector.progress(0.0, 5.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn body_collector_progress_allows_below_limit() {
+        let mut collector = BodyCollector::default();
+        collector.reset(5);
+        assert!(collector.progress(0.0, 2.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn dns_timeout_message_detection() {
+        assert!(super::is_dns_timeout_message(
+            "[28] Timeout was reached (Resolving timed out after 10000 milliseconds)"
+        ));
+        assert!(!super::is_dns_timeout_message(
+            "[28] Timeout was reached (Operation timed out after 10000 milliseconds)"
+        ));
     }
 }
