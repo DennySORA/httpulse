@@ -53,6 +53,13 @@ fn run_worker(
         }
     };
 
+    // Perform initial probe immediately (don't wait for interval)
+    let sample = client.probe(&target, &profile, resolved_ip);
+    if let Some(remote) = sample.remote {
+        resolved_ip = Some(remote.ip());
+    }
+    let _ = sample_tx.send(sample);
+
     loop {
         if paused {
             match control_rx.recv() {

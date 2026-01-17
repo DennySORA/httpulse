@@ -168,7 +168,7 @@ impl ProbeClient {
 
         let t_connect = saturating_sub(t_connect_raw, t_dns_raw);
         let t_tls = saturating_sub(t_tls_raw, t_connect_raw);
-        let t_ttfb = saturating_sub(t_tls_raw, t_tls_raw);
+        let t_ttfb = saturating_sub(t_ttfb_raw, t_tls_raw);
         let t_download = saturating_sub(t_total, t_ttfb_raw);
 
         let downloaded_bytes = self.easy.get_ref().bytes;
