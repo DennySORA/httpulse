@@ -1,5 +1,5 @@
 use crate::app::{
-    apply_edit_command, parse_profile_specs, parse_target_url, AppState, ProfileViewMode, StatFocus,
+    apply_edit_command, parse_profile_specs, parse_target_url, AppState, ProfileViewMode,
 };
 use crate::metrics::MetricKind;
 use crate::metrics_aggregate::ProfileKey;
@@ -30,6 +30,7 @@ enum SettingsField {
     TargetTimeout,
     TargetDnsEnabled,
     TargetPaused,
+    TargetShowChart,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -276,11 +277,8 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
             Style::default().fg(Color::Green),
         ),
         Span::raw("│ "),
-        Span::styled("Stat:", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!(" {:?} ", app.stat_focus),
-            Style::default().fg(Color::Yellow),
-        ),
+        Span::styled("Stats:", Style::default().fg(Color::DarkGray)),
+        Span::styled(" P50/P99/Mean ", Style::default().fg(Color::Yellow)),
         Span::raw("│ "),
         Span::styled("Metrics:", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -310,16 +308,16 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
             ("e", "Edit"),
             ("p", "Pause"),
             ("c", "Compare"),
-            ("s", "Stat"),
+            ("g", "Chart"),
             ("w", "Window"),
-            ("↑↓", "Select"),
+            ("Up/Down", "Select"),
             ("Tab", "Profile"),
             ("1-8", "Metrics"),
         ],
         InputMode::Help => vec![("Esc", "Close"), ("q", "Close")],
         InputMode::Settings => vec![
             ("Esc", "Close"),
-            ("↑↓", "Select"),
+            ("Up/Down", "Select"),
             ("Enter", "Edit"),
             ("Space", "Toggle"),
         ],
@@ -370,7 +368,7 @@ fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
         Line::from(""),
         Line::styled("─── Navigation ───", Style::default().fg(Color::Yellow)),
         Line::from(vec![
-            Span::styled("  ↑/↓       ", Style::default().fg(Color::Green)),
+            Span::styled("  Up/Down, j/k  ", Style::default().fg(Color::Green)),
             Span::raw("Select target"),
         ]),
         Line::from(vec![
@@ -402,8 +400,8 @@ fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
             Span::raw("Toggle compare mode"),
         ]),
         Line::from(vec![
-            Span::styled("  s         ", Style::default().fg(Color::Green)),
-            Span::raw("Cycle stat focus (P50/P99/Mean)"),
+            Span::styled("  g         ", Style::default().fg(Color::Green)),
+            Span::raw("Toggle chart visibility"),
         ]),
         Line::from(vec![
             Span::styled("  w         ", Style::default().fg(Color::Green)),
@@ -642,6 +640,17 @@ fn settings_rows(app: &AppState) -> Vec<SettingsRow> {
             action: "Enter to toggle",
         });
         rows.push(SettingsRow {
+            field: SettingsField::TargetShowChart,
+            scope: "Target",
+            label: "Chart",
+            value: if target.show_chart {
+                "On".to_string()
+            } else {
+                "Off".to_string()
+            },
+            action: "Enter to toggle",
+        });
+        rows.push(SettingsRow {
             field: SettingsField::TargetPaused,
             scope: "Target",
             label: "Status",
@@ -663,7 +672,9 @@ fn settings_edit_prompt(field: SettingsField) -> &'static str {
         SettingsField::LinkCapacityMbps => "Set link capacity Mbps (blank=off): ",
         SettingsField::TargetInterval => "Set probe interval (e.g. 5s): ",
         SettingsField::TargetTimeout => "Set timeout (e.g. 10s): ",
-        SettingsField::TargetDnsEnabled | SettingsField::TargetPaused => "Press Enter to toggle: ",
+        SettingsField::TargetDnsEnabled
+        | SettingsField::TargetPaused
+        | SettingsField::TargetShowChart => "Press Enter to toggle: ",
     }
 }
 
@@ -683,7 +694,9 @@ fn seed_settings_input(app: &AppState, field: SettingsField) -> String {
             .selected_target()
             .map(|target| format!("{}s", target.config.timeout_total.as_secs()))
             .unwrap_or_default(),
-        SettingsField::TargetDnsEnabled | SettingsField::TargetPaused => String::new(),
+        SettingsField::TargetDnsEnabled
+        | SettingsField::TargetPaused
+        | SettingsField::TargetShowChart => String::new(),
     }
 }
 
@@ -825,7 +838,7 @@ fn handle_normal_key(
                 };
             }
         }
-        KeyCode::Char('s') => app.cycle_stat_focus(),
+        KeyCode::Char('g') => app.toggle_chart(app.selected_target),
         KeyCode::Char('w') => app.cycle_window(),
         KeyCode::Down | KeyCode::Char('j') => {
             if app.selected_target + 1 < app.targets.len() {
@@ -897,6 +910,9 @@ fn handle_settings_key(
                             updated.dns_enabled = !updated.dns_enabled;
                             app.update_target_config(app.selected_target, updated);
                         }
+                    }
+                    SettingsField::TargetShowChart => {
+                        app.toggle_chart(app.selected_target);
                     }
                     SettingsField::TargetPaused => {
                         app.toggle_pause(app.selected_target);
@@ -978,7 +994,9 @@ fn handle_settings_edit_key(
                         }
                     }
                 }
-                SettingsField::TargetDnsEnabled | SettingsField::TargetPaused => {}
+                SettingsField::TargetDnsEnabled
+                | SettingsField::TargetPaused
+                | SettingsField::TargetShowChart => {}
             }
 
             if applied {
@@ -1201,6 +1219,7 @@ fn draw_target_pane(
         .filter_map(|p| p.last_error.as_ref().map(|e| (&p.config.name, e)))
         .collect();
     let has_error = !errors.is_empty();
+    let show_chart = target.show_chart;
 
     let status_indicator = if target.paused {
         "⏸ PAUSED"
@@ -1243,8 +1262,13 @@ fn draw_target_pane(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Layout: metrics table, chart, and optional error bar
-    let mut constraints = vec![Constraint::Length(7), Constraint::Min(6)];
+    // Layout: metrics table, chart (or placeholder), and optional error bar
+    let mut constraints = vec![Constraint::Length(7)];
+    if show_chart {
+        constraints.push(Constraint::Min(6));
+    } else {
+        constraints.push(Constraint::Length(3));
+    }
     if has_error {
         constraints.push(Constraint::Length(2));
     }
@@ -1255,10 +1279,15 @@ fn draw_target_pane(
         .split(inner);
 
     draw_metrics_table(frame, sections[0], app, target);
-    draw_chart(frame, sections[1], app, target);
+    if show_chart {
+        draw_chart(frame, sections[1], app, target);
+    } else {
+        draw_chart_placeholder(frame, sections[1]);
+    }
 
     // Draw error bar if there are errors
     if has_error {
+        let error_idx = sections.len().saturating_sub(1);
         let error_msg: String = errors
             .iter()
             .map(|(name, err)| format!("{}: {:?}", name, err))
@@ -1272,7 +1301,7 @@ fn draw_target_pane(
             ),
         ]);
         let error_para = Paragraph::new(error_line).style(Style::default().bg(Color::DarkGray));
-        frame.render_widget(error_para, sections[2]);
+        frame.render_widget(error_para, sections[error_idx]);
     }
 }
 
@@ -1332,19 +1361,18 @@ fn draw_metrics_table(
         for profile in &profiles {
             let aggregate = app.target_aggregate(target, profile);
             let stats = aggregate.by_metric.get(metric);
-            let value = stats.and_then(|stats| stat_value(stats, app.stat_focus));
-            cells.push(Span::raw(format_metric(*metric, value)));
+            cells.push(Span::raw(format_stat_triplet(*metric, stats)));
         }
         Row::new(cells)
     });
 
     let widths: Vec<Constraint> = std::iter::once(Constraint::Length(10))
-        .chain(profiles.iter().map(|_| Constraint::Length(14)))
+        .chain(profiles.iter().map(|_| Constraint::Length(18)))
         .collect();
 
     let table = Table::new(rows, widths).header(header).block(
         Block::default()
-            .title(format!(" Metrics ({:?}) ", app.stat_focus))
+            .title(" Metrics (P50/P99/Mean) ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     );
@@ -1478,15 +1506,25 @@ fn draw_chart(
     frame.render_widget(chart, area);
 }
 
-fn stat_value(stats: &crate::metrics::MetricStats, focus: StatFocus) -> Option<f64> {
-    match focus {
-        StatFocus::P50 => stats.p50,
-        StatFocus::P99 => stats.p99,
-        StatFocus::Mean => stats.mean,
-    }
+fn draw_chart_placeholder(frame: &mut ratatui::Frame, area: Rect) {
+    frame.render_widget(Clear, area);
+    let text = Paragraph::new(Line::from(vec![
+        Span::styled(" Chart hidden ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" (press g) ", Style::default().fg(Color::Yellow)),
+    ]))
+    .alignment(Alignment::Center)
+    .style(Style::default().bg(Color::Black));
+    frame.render_widget(text, area);
 }
 
-fn format_metric(metric: MetricKind, value: Option<f64>) -> String {
+fn format_stat_triplet(metric: MetricKind, stats: Option<&crate::metrics::MetricStats>) -> String {
+    let p50 = format_metric_compact(metric, stats.and_then(|stats| stats.p50));
+    let p99 = format_metric_compact(metric, stats.and_then(|stats| stats.p99));
+    let mean = format_metric_compact(metric, stats.and_then(|stats| stats.mean));
+    format!("{p50}/{p99}/{mean}")
+}
+
+fn format_metric_compact(metric: MetricKind, value: Option<f64>) -> String {
     let value = match value {
         Some(value) => value,
         None => return "—".to_string(),
@@ -1501,10 +1539,11 @@ fn format_metric(metric: MetricKind, value: Option<f64>) -> String {
         | MetricKind::Total
         | MetricKind::Rtt
         | MetricKind::RttVar
-        | MetricKind::Jitter => format!("{value:.1}ms"),
-        MetricKind::GoodputBps => format!("{:.2}Mbps", value / 1_000_000.0),
-        MetricKind::BandwidthUtilization => format!("{:.0}%", value * 100.0),
-        MetricKind::ProbeLossRate => format!("{:.0}%", value * 100.0),
+        | MetricKind::Jitter => format!("{value:.1}"),
+        MetricKind::GoodputBps => format!("{:.1}M", value / 1_000_000.0),
+        MetricKind::BandwidthUtilization | MetricKind::ProbeLossRate => {
+            format!("{:.0}%", value * 100.0)
+        }
         _ => format!("{value:.0}"),
     }
 }

@@ -13,13 +13,6 @@ pub enum ProfileViewMode {
     Compare,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StatFocus {
-    P50,
-    P99,
-    Mean,
-}
-
 pub struct AppState {
     pub global: GlobalConfig,
     pub metrics: MetricsStore,
@@ -28,7 +21,6 @@ pub struct AppState {
     pub selected_metric: MetricKind,
     pub selected_metrics: HashSet<MetricKind>,
     pub window: crate::config::WindowSpec,
-    pub stat_focus: StatFocus,
 }
 
 pub struct TargetRuntime {
@@ -38,6 +30,7 @@ pub struct TargetRuntime {
     pub profiles: Vec<ProfileRuntime>,
     pub view_mode: ProfileViewMode,
     pub selected_profile: usize,
+    pub show_chart: bool,
 }
 
 pub struct ProfileRuntime {
@@ -59,7 +52,6 @@ impl AppState {
             selected_metric: MetricKind::Total,
             selected_metrics,
             window: global.default_window,
-            stat_focus: StatFocus::P50,
         }
     }
 
@@ -90,6 +82,7 @@ impl AppState {
             profiles: profile_runtimes,
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
+            show_chart: true,
         });
         self.selected_target = self.targets.len().saturating_sub(1);
     }
@@ -179,19 +172,17 @@ impl AppState {
         }
     }
 
-    pub fn cycle_stat_focus(&mut self) {
-        self.stat_focus = match self.stat_focus {
-            StatFocus::P50 => StatFocus::P99,
-            StatFocus::P99 => StatFocus::Mean,
-            StatFocus::Mean => StatFocus::P50,
-        };
-    }
-
     pub fn cycle_window(&mut self) {
         let windows = &self.global.windows;
         if let Some(idx) = windows.iter().position(|w| *w == self.window) {
             let next = (idx + 1) % windows.len();
             self.window = windows[next];
+        }
+    }
+
+    pub fn toggle_chart(&mut self, index: usize) {
+        if let Some(target) = self.targets.get_mut(index) {
+            target.show_chart = !target.show_chart;
         }
     }
 
@@ -373,6 +364,7 @@ mod tests {
             profiles: Vec::new(),
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
+            show_chart: true,
         };
 
         let updated =
