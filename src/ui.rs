@@ -14,13 +14,23 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, Padding, Paragraph, Row,
-    Table, Wrap,
+    Block, Borders, Cell, Chart, Clear, Dataset, GraphType, List, ListItem, Padding, Paragraph,
+    Row, Table, TableState, Wrap,
 };
 use ratatui::Terminal;
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 use url::Url;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SettingsField {
+    UiRefreshHz,
+    LinkCapacityMbps,
+    TargetInterval,
+    TargetTimeout,
+    TargetDnsEnabled,
+    TargetPaused,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputMode {
@@ -29,7 +39,62 @@ enum InputMode {
     EditTarget,
     Help,
     Settings,
+    SettingsEdit(SettingsField),
     ConfirmDelete,
+}
+
+struct SettingsRow {
+    field: SettingsField,
+    scope: &'static str,
+    label: &'static str,
+    value: String,
+    action: &'static str,
+}
+
+struct SettingsState {
+    selected: usize,
+    notice: Option<String>,
+}
+
+impl SettingsState {
+    fn new() -> Self {
+        Self {
+            selected: 0,
+            notice: None,
+        }
+    }
+
+    fn select_next(&mut self, total: usize) {
+        if total == 0 {
+            self.selected = 0;
+            return;
+        }
+        self.selected = (self.selected + 1) % total;
+    }
+
+    fn select_prev(&mut self, total: usize) {
+        if total == 0 {
+            self.selected = 0;
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = total - 1;
+        } else {
+            self.selected = self.selected.saturating_sub(1);
+        }
+    }
+
+    fn clamp(&mut self, total: usize) {
+        if total == 0 {
+            self.selected = 0;
+        } else if self.selected >= total {
+            self.selected = total - 1;
+        }
+    }
+
+    fn clear_notice(&mut self) {
+        self.notice = None;
+    }
 }
 
 pub fn run_ui(
@@ -45,6 +110,7 @@ pub fn run_ui(
 
     let mut input_mode = InputMode::Normal;
     let mut input_buffer = String::new();
+    let mut settings_state = SettingsState::new();
     let mut should_quit = false;
     let mut last_tick = Instant::now();
 
@@ -102,7 +168,16 @@ pub fn run_ui(
             // Overlay popups
             match input_mode {
                 InputMode::Help => draw_help_popup(frame, size),
-                InputMode::Settings => draw_settings_popup(frame, size, &app),
+                InputMode::Settings | InputMode::SettingsEdit(_) => {
+                    draw_settings_popup(
+                        frame,
+                        size,
+                        &app,
+                        &settings_state,
+                        input_mode,
+                        &input_buffer,
+                    );
+                }
                 InputMode::ConfirmDelete => draw_confirm_delete_popup(frame, size, &app),
                 _ => {}
             }
@@ -114,7 +189,13 @@ pub fn run_ui(
             if let Event::Key(key) = event::read()? {
                 match input_mode {
                     InputMode::Normal => {
-                        if handle_normal_key(key, &mut app, &mut input_mode, &mut input_buffer) {
+                        if handle_normal_key(
+                            key,
+                            &mut app,
+                            &mut input_mode,
+                            &mut input_buffer,
+                            &mut settings_state,
+                        ) {
                             should_quit = true;
                         }
                     }
@@ -122,7 +203,23 @@ pub fn run_ui(
                         handle_help_key(key, &mut input_mode);
                     }
                     InputMode::Settings => {
-                        handle_settings_key(key, &mut input_mode);
+                        handle_settings_key(
+                            key,
+                            &mut app,
+                            &mut input_mode,
+                            &mut input_buffer,
+                            &mut settings_state,
+                        );
+                    }
+                    InputMode::SettingsEdit(field) => {
+                        handle_settings_edit_key(
+                            key,
+                            &mut app,
+                            &mut input_mode,
+                            &mut input_buffer,
+                            field,
+                            &mut settings_state,
+                        );
                     }
                     InputMode::ConfirmDelete => {
                         handle_confirm_delete_key(key, &mut app, &mut input_mode);
@@ -219,7 +316,14 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
             ("Tab", "Profile"),
             ("1-8", "Metrics"),
         ],
-        InputMode::Help | InputMode::Settings => vec![("Esc", "Close"), ("q", "Close")],
+        InputMode::Help => vec![("Esc", "Close"), ("q", "Close")],
+        InputMode::Settings => vec![
+            ("Esc", "Close"),
+            ("↑↓", "Select"),
+            ("Enter", "Edit"),
+            ("Space", "Toggle"),
+        ],
+        InputMode::SettingsEdit(_) => vec![("Enter", "Apply"), ("Esc", "Cancel")],
         InputMode::AddTarget => vec![("Enter", "Confirm"), ("Esc", "Cancel")],
         InputMode::EditTarget => vec![("Enter", "Apply"), ("Esc", "Cancel")],
         InputMode::ConfirmDelete => vec![("y", "Yes, Delete"), ("n/Esc", "Cancel")],
@@ -367,189 +471,240 @@ fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
     frame.render_widget(help, popup_area);
 }
 
-fn draw_settings_popup(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
-    let popup_area = centered_rect(50, 60, area);
-
-    // Clear background
+fn draw_settings_popup(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    app: &AppState,
+    settings_state: &SettingsState,
+    input_mode: InputMode,
+    input_buffer: &str,
+) {
+    let popup_area = centered_rect(70, 70, area);
     frame.render_widget(Clear, popup_area);
 
-    let mut lines = vec![
-        Line::from(vec![Span::styled(
-            "  Global Settings  ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  UI Refresh Rate:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{} Hz", app.global.ui_refresh_hz),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  Default Window:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                app.global.default_window.label(),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  Link Capacity:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                app.global
-                    .link_capacity_mbps
-                    .map(|c| format!("{} Mbps", c))
-                    .unwrap_or_else(|| "Not set".to_string()),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  eBPF Enabled:     ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                if app.global.ebpf_enabled { "Yes" } else { "No" },
-                Style::default().fg(if app.global.ebpf_enabled {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-        ]),
-        Line::from(""),
+    let rows = settings_rows(app);
+    let mut table_state = TableState::default();
+    let mut selected = settings_state.selected;
+    if rows.is_empty() {
+        table_state.select(None);
+    } else {
+        if selected >= rows.len() {
+            selected = rows.len().saturating_sub(1);
+        }
+        table_state.select(Some(selected));
+    }
+
+    let title = app
+        .selected_target()
+        .map(|target| {
+            format!(
+                " Settings - {} ",
+                truncate_string(target.config.url.as_str(), 30)
+            )
+        })
+        .unwrap_or_else(|| " Settings ".to_string());
+
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .padding(Padding::horizontal(1))
+        .style(Style::default().bg(Color::Black));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let mut constraints = vec![Constraint::Min(6), Constraint::Length(2)];
+    if matches!(input_mode, InputMode::SettingsEdit(_)) {
+        constraints.push(Constraint::Length(3));
+    }
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    let header = Row::new(vec![
+        Cell::from("Scope"),
+        Cell::from("Setting"),
+        Cell::from("Value"),
+        Cell::from("Action"),
+    ])
+    .style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let table_rows = rows.iter().map(|row| {
+        Row::new(vec![
+            Cell::from(row.scope),
+            Cell::from(row.label),
+            Cell::from(row.value.clone()),
+            Cell::from(row.action),
+        ])
+    });
+
+    let widths = [
+        Constraint::Length(8),
+        Constraint::Length(18),
+        Constraint::Length(18),
+        Constraint::Min(12),
     ];
 
-    // Selected target settings
-    if let Some(target) = app.selected_target() {
-        lines.push(Line::styled(
-            "─── Selected Target ───",
-            Style::default().fg(Color::Yellow),
-        ));
-        lines.push(Line::from(vec![
-            Span::styled("  URL:              ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                truncate_string(target.config.url.as_str(), 30),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  Interval:         ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:.1}s", target.config.interval.as_secs_f64()),
-                Style::default().fg(Color::White),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  Timeout:          ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:.1}s", target.config.timeout_total.as_secs_f64()),
-                Style::default().fg(Color::White),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  DNS Enabled:      ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                if target.config.dns_enabled {
-                    "Yes"
-                } else {
-                    "No"
-                },
-                Style::default().fg(if target.config.dns_enabled {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  Status:           ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                if target.paused { "Paused" } else { "Running" },
-                Style::default().fg(if target.paused {
-                    Color::Yellow
-                } else {
-                    Color::Green
-                }),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  Profiles:         ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{}", target.profiles.len()),
-                Style::default().fg(Color::White),
-            ),
-        ]));
+    let table = Table::new(table_rows, widths)
+        .header(header)
+        .column_spacing(1)
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
 
-        // Profile details
-        if !target.profiles.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(
-                "─── Profile Details ───",
-                Style::default().fg(Color::Yellow),
-            ));
-            for (idx, profile) in target.profiles.iter().enumerate() {
-                let is_selected = idx == target.selected_profile;
-                let indicator = if is_selected { "▸" } else { " " };
-                let has_error = profile.last_error.is_some();
-                let status_icon = if has_error { "⚠" } else { "✓" };
-                let status_color = if has_error { Color::Red } else { Color::Green };
+    frame.render_widget(Clear, sections[0]);
+    frame.render_stateful_widget(table, sections[0], &mut table_state);
 
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {} ", indicator),
-                        Style::default().fg(if is_selected {
-                            Color::Yellow
-                        } else {
-                            Color::DarkGray
-                        }),
-                    ),
-                    Span::styled(
-                        format!("{} ", status_icon),
-                        Style::default().fg(status_color),
-                    ),
-                    Span::styled(&profile.config.name, Style::default().fg(Color::Cyan)),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::styled("      ", Style::default()),
-                    Span::styled(
-                        format!(
-                            "{} {} {} {}",
-                            profile.config.http,
-                            profile.config.tls,
-                            profile.config.conn_reuse,
-                            profile.config.method
-                        ),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]));
-            }
-        }
-    } else {
-        lines.push(Line::styled(
-            "  No target selected",
-            Style::default().fg(Color::DarkGray),
+    let mut help_lines = vec![Line::from(vec![
+        Span::styled("  ↑↓ ", Style::default().fg(Color::Green)),
+        Span::raw("Select  "),
+        Span::styled("Enter ", Style::default().fg(Color::Green)),
+        Span::raw("Edit/Toggle  "),
+        Span::styled("Esc ", Style::default().fg(Color::Green)),
+        Span::raw("Close"),
+    ])];
+    if let Some(notice) = &settings_state.notice {
+        help_lines.push(Line::styled(
+            format!("  {notice}"),
+            Style::default().fg(Color::Red),
         ));
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
-        "  Press Esc to close  ",
-        Style::default().fg(Color::DarkGray),
-    ));
+    let help = Paragraph::new(help_lines).style(Style::default().bg(Color::Black));
+    frame.render_widget(help, sections[1]);
 
-    let settings = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title(" Settings ")
-                .title_alignment(Alignment::Center)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .padding(Padding::horizontal(1)),
-        )
-        .style(Style::default().bg(Color::Black))
-        .wrap(Wrap { trim: false });
+    if let InputMode::SettingsEdit(field) = input_mode {
+        let prompt = settings_edit_prompt(field);
+        let input_line = Line::from(vec![
+            Span::styled(format!("  {prompt}"), Style::default().fg(Color::Yellow)),
+            Span::raw(input_buffer),
+            Span::styled("█", Style::default().fg(Color::Gray)),
+        ]);
+        let input = Paragraph::new(input_line).style(Style::default().bg(Color::DarkGray));
+        frame.render_widget(input, sections[2]);
+    }
+}
 
-    frame.render_widget(settings, popup_area);
+fn settings_rows(app: &AppState) -> Vec<SettingsRow> {
+    let mut rows = Vec::new();
+    rows.push(SettingsRow {
+        field: SettingsField::UiRefreshHz,
+        scope: "Global",
+        label: "UI refresh",
+        value: format!("{} Hz", app.global.ui_refresh_hz),
+        action: "Enter to edit",
+    });
+    rows.push(SettingsRow {
+        field: SettingsField::LinkCapacityMbps,
+        scope: "Global",
+        label: "Link capacity",
+        value: app
+            .global
+            .link_capacity_mbps
+            .map(|value| format!("{value:.1} Mbps"))
+            .unwrap_or_else(|| "Off".to_string()),
+        action: "Enter to edit",
+    });
+
+    if let Some(target) = app.selected_target() {
+        rows.push(SettingsRow {
+            field: SettingsField::TargetInterval,
+            scope: "Target",
+            label: "Interval",
+            value: format!("{}s", target.config.interval.as_secs()),
+            action: "Enter to edit",
+        });
+        rows.push(SettingsRow {
+            field: SettingsField::TargetTimeout,
+            scope: "Target",
+            label: "Timeout",
+            value: format!("{}s", target.config.timeout_total.as_secs()),
+            action: "Enter to edit",
+        });
+        rows.push(SettingsRow {
+            field: SettingsField::TargetDnsEnabled,
+            scope: "Target",
+            label: "DNS",
+            value: if target.config.dns_enabled {
+                "On".to_string()
+            } else {
+                "Off".to_string()
+            },
+            action: "Enter to toggle",
+        });
+        rows.push(SettingsRow {
+            field: SettingsField::TargetPaused,
+            scope: "Target",
+            label: "Status",
+            value: if target.paused {
+                "Paused".to_string()
+            } else {
+                "Running".to_string()
+            },
+            action: "Enter to toggle",
+        });
+    }
+
+    rows
+}
+
+fn settings_edit_prompt(field: SettingsField) -> &'static str {
+    match field {
+        SettingsField::UiRefreshHz => "Set UI refresh (Hz): ",
+        SettingsField::LinkCapacityMbps => "Set link capacity Mbps (blank=off): ",
+        SettingsField::TargetInterval => "Set probe interval (e.g. 5s): ",
+        SettingsField::TargetTimeout => "Set timeout (e.g. 10s): ",
+        SettingsField::TargetDnsEnabled | SettingsField::TargetPaused => "Press Enter to toggle: ",
+    }
+}
+
+fn seed_settings_input(app: &AppState, field: SettingsField) -> String {
+    match field {
+        SettingsField::UiRefreshHz => app.global.ui_refresh_hz.to_string(),
+        SettingsField::LinkCapacityMbps => app
+            .global
+            .link_capacity_mbps
+            .map(|value| format!("{value:.1}"))
+            .unwrap_or_default(),
+        SettingsField::TargetInterval => app
+            .selected_target()
+            .map(|target| format!("{}s", target.config.interval.as_secs()))
+            .unwrap_or_default(),
+        SettingsField::TargetTimeout => app
+            .selected_target()
+            .map(|target| format!("{}s", target.config.timeout_total.as_secs()))
+            .unwrap_or_default(),
+        SettingsField::TargetDnsEnabled | SettingsField::TargetPaused => String::new(),
+    }
+}
+
+fn parse_link_capacity_mbps(input: &str) -> Result<Option<f64>, &'static str> {
+    let trimmed = input.trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("off")
+        || trimmed.eq_ignore_ascii_case("none")
+    {
+        return Ok(None);
+    }
+
+    let normalized = trimmed
+        .strip_suffix("mbps")
+        .or_else(|| trimmed.strip_suffix("Mbps"))
+        .unwrap_or(trimmed);
+    let value: f64 = normalized.trim().parse().map_err(|_| "Invalid number")?;
+    if value <= 0.0 {
+        return Err("Value must be > 0");
+    }
+    Ok(Some(value))
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -631,6 +786,7 @@ fn handle_normal_key(
     app: &mut AppState,
     input_mode: &mut InputMode,
     input_buffer: &mut String,
+    settings_state: &mut SettingsState,
 ) -> bool {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return true;
@@ -642,6 +798,8 @@ fn handle_normal_key(
         }
         KeyCode::Char('S') => {
             *input_mode = InputMode::Settings;
+            settings_state.selected = 0;
+            settings_state.clear_notice();
         }
         KeyCode::Char('a') => {
             *input_mode = InputMode::AddTarget;
@@ -706,10 +864,136 @@ fn handle_help_key(key: KeyEvent, input_mode: &mut InputMode) {
     }
 }
 
-fn handle_settings_key(key: KeyEvent, input_mode: &mut InputMode) {
+fn handle_settings_key(
+    key: KeyEvent,
+    app: &mut AppState,
+    input_mode: &mut InputMode,
+    input_buffer: &mut String,
+    settings_state: &mut SettingsState,
+) {
+    let rows = settings_rows(app);
+    settings_state.clamp(rows.len());
+
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => {
             *input_mode = InputMode::Normal;
+            settings_state.clear_notice();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            settings_state.select_next(rows.len());
+            settings_state.clear_notice();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            settings_state.select_prev(rows.len());
+            settings_state.clear_notice();
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            settings_state.clear_notice();
+            if let Some(row) = rows.get(settings_state.selected) {
+                match row.field {
+                    SettingsField::TargetDnsEnabled => {
+                        if let Some(target) = app.selected_target() {
+                            let mut updated = target.config.clone();
+                            updated.dns_enabled = !updated.dns_enabled;
+                            app.update_target_config(app.selected_target, updated);
+                        }
+                    }
+                    SettingsField::TargetPaused => {
+                        app.toggle_pause(app.selected_target);
+                    }
+                    SettingsField::UiRefreshHz
+                    | SettingsField::LinkCapacityMbps
+                    | SettingsField::TargetInterval
+                    | SettingsField::TargetTimeout => {
+                        *input_mode = InputMode::SettingsEdit(row.field);
+                        input_buffer.clear();
+                        input_buffer.push_str(&seed_settings_input(app, row.field));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_settings_edit_key(
+    key: KeyEvent,
+    app: &mut AppState,
+    input_mode: &mut InputMode,
+    input_buffer: &mut String,
+    field: SettingsField,
+    settings_state: &mut SettingsState,
+) {
+    match key.code {
+        KeyCode::Esc => {
+            *input_mode = InputMode::Settings;
+            input_buffer.clear();
+            settings_state.clear_notice();
+        }
+        KeyCode::Enter => {
+            let trimmed = input_buffer.trim();
+            let mut applied = false;
+            settings_state.clear_notice();
+            match field {
+                SettingsField::UiRefreshHz => {
+                    if let Ok(value) = trimmed.parse::<u16>() {
+                        if value > 0 {
+                            app.global.ui_refresh_hz = value;
+                            applied = true;
+                        } else {
+                            settings_state.notice = Some("Refresh must be > 0".to_string());
+                        }
+                    } else {
+                        settings_state.notice = Some("Invalid refresh value".to_string());
+                    }
+                }
+                SettingsField::LinkCapacityMbps => match parse_link_capacity_mbps(trimmed) {
+                    Ok(value) => {
+                        app.global.link_capacity_mbps = value;
+                        applied = true;
+                    }
+                    Err(message) => {
+                        settings_state.notice = Some(message.to_string());
+                    }
+                },
+                SettingsField::TargetInterval => {
+                    if let Some(target) = app.selected_target() {
+                        let command = format!("interval={trimmed}");
+                        if let Some(updated) = apply_edit_command(target, &command) {
+                            app.update_target_config(app.selected_target, updated);
+                            applied = true;
+                        } else {
+                            settings_state.notice = Some("Invalid interval value".to_string());
+                        }
+                    }
+                }
+                SettingsField::TargetTimeout => {
+                    if let Some(target) = app.selected_target() {
+                        let command = format!("timeout={trimmed}");
+                        if let Some(updated) = apply_edit_command(target, &command) {
+                            app.update_target_config(app.selected_target, updated);
+                            applied = true;
+                        } else {
+                            settings_state.notice = Some("Invalid timeout value".to_string());
+                        }
+                    }
+                }
+                SettingsField::TargetDnsEnabled | SettingsField::TargetPaused => {}
+            }
+
+            if applied {
+                *input_mode = InputMode::Settings;
+                input_buffer.clear();
+            }
+        }
+        KeyCode::Backspace => {
+            input_buffer.pop();
+        }
+        KeyCode::Char(ch) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                return;
+            }
+            input_buffer.push(ch);
         }
         _ => {}
     }
@@ -757,6 +1041,7 @@ fn handle_input_key(
                 InputMode::Normal
                 | InputMode::Help
                 | InputMode::Settings
+                | InputMode::SettingsEdit(_)
                 | InputMode::ConfirmDelete => {}
             }
             *input_mode = InputMode::Normal;
@@ -1072,6 +1357,8 @@ fn draw_chart(
     app: &AppState,
     target: &crate::app::TargetRuntime,
 ) {
+    frame.render_widget(Clear, area);
+
     let window_seconds = app.window.duration().as_secs_f64();
     let mut series_specs: Vec<SeriesSpec> = Vec::new();
     let mut min_y = f64::INFINITY;
@@ -1169,6 +1456,7 @@ fn draw_chart(
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
+        .style(Style::default().bg(Color::Black))
         .x_axis(
             ratatui::widgets::Axis::default()
                 .bounds([0.0, window_seconds])
@@ -1256,4 +1544,29 @@ fn update_bounds(points: &[(f64, f64)], min_y: &mut f64, max_y: &mut f64) {
         .fold(f64::NEG_INFINITY, f64::max);
     *min_y = min_y.min(local_min);
     *max_y = max_y.max(local_max);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_link_capacity_mbps;
+
+    #[test]
+    fn parse_link_capacity_allows_off_values() {
+        assert_eq!(parse_link_capacity_mbps("").unwrap(), None);
+        assert_eq!(parse_link_capacity_mbps("off").unwrap(), None);
+        assert_eq!(parse_link_capacity_mbps("none").unwrap(), None);
+    }
+
+    #[test]
+    fn parse_link_capacity_accepts_numbers() {
+        assert_eq!(parse_link_capacity_mbps("100").unwrap(), Some(100.0));
+        assert_eq!(parse_link_capacity_mbps("250.5").unwrap(), Some(250.5));
+        assert_eq!(parse_link_capacity_mbps("42Mbps").unwrap(), Some(42.0));
+    }
+
+    #[test]
+    fn parse_link_capacity_rejects_invalid() {
+        assert!(parse_link_capacity_mbps("-1").is_err());
+        assert!(parse_link_capacity_mbps("abc").is_err());
+    }
 }
