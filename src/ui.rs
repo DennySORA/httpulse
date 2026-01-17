@@ -1245,80 +1245,119 @@ fn draw_target_pane(
     frame.render_widget(block, area);
 
     // Split into main content and sidebar
-    let show_sidebar = inner.width > 60 && pane_mode == TargetPaneMode::Split;
+    let show_sidebar = inner.width > 80 && pane_mode == TargetPaneMode::Split;
     let (main_area, sidebar_area) = if show_sidebar {
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(40), Constraint::Length(26)])
+            .constraints([Constraint::Min(50), Constraint::Length(26)])
             .split(inner);
         (h_chunks[0], Some(h_chunks[1]))
     } else {
         (inner, None)
     };
 
-    // Layout: metrics table and/or chart, plus optional error bar
-    let mut constraints = Vec::new();
+    // Draw based on pane mode
     match pane_mode {
         TargetPaneMode::Split => {
-            constraints.push(Constraint::Length(7));
-            constraints.push(Constraint::Length(10));
-            constraints.push(Constraint::Min(6));
+            // Split mode: [Summary | Metrics] on top, Chart below
+            let mut v_constraints = vec![Constraint::Length(10), Constraint::Min(6)];
+            if has_error {
+                v_constraints.push(Constraint::Length(2));
+            }
+            let v_sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(v_constraints)
+                .split(main_area);
+
+            // Top row: Summary (left) | Metrics (right)
+            let top_row = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(28), Constraint::Min(30)])
+                .split(v_sections[0]);
+
+            draw_summary_pane(frame, top_row[0], app, target);
+            draw_metrics_table(frame, top_row[1], app, target);
+
+            // Bottom: Chart
+            draw_chart(frame, v_sections[1], app, target);
+
+            // Error bar if needed
+            if has_error {
+                draw_error_bar(frame, v_sections[2], &errors);
+            }
         }
         TargetPaneMode::Chart => {
-            constraints.push(Constraint::Min(10));
+            let mut constraints = vec![Constraint::Min(10)];
+            if has_error {
+                constraints.push(Constraint::Length(2));
+            }
+            let sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(constraints)
+                .split(main_area);
+
+            draw_chart(frame, sections[0], app, target);
+            if has_error {
+                draw_error_bar(frame, sections[1], &errors);
+            }
         }
         TargetPaneMode::Metrics => {
-            constraints.push(Constraint::Min(10));
+            let mut constraints = vec![Constraint::Min(10)];
+            if has_error {
+                constraints.push(Constraint::Length(2));
+            }
+            let sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(constraints)
+                .split(main_area);
+
+            draw_metrics_table(frame, sections[0], app, target);
+            if has_error {
+                draw_error_bar(frame, sections[1], &errors);
+            }
         }
         TargetPaneMode::Summary => {
-            constraints.push(Constraint::Min(10));
+            let mut constraints = vec![Constraint::Min(10)];
+            if has_error {
+                constraints.push(Constraint::Length(2));
+            }
+            let sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(constraints)
+                .split(main_area);
+
+            draw_summary_pane(frame, sections[0], app, target);
+            if has_error {
+                draw_error_bar(frame, sections[1], &errors);
+            }
         }
-    }
-    if has_error {
-        constraints.push(Constraint::Length(2));
-    }
-
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(main_area);
-
-    let mut idx = 0usize;
-    if pane_mode == TargetPaneMode::Split || pane_mode == TargetPaneMode::Summary {
-        draw_summary_pane(frame, sections[idx], app, target);
-        idx += 1;
-    }
-    if pane_mode == TargetPaneMode::Split || pane_mode == TargetPaneMode::Metrics {
-        draw_metrics_table(frame, sections[idx], app, target);
-        idx += 1;
-    }
-    if pane_mode == TargetPaneMode::Split || pane_mode == TargetPaneMode::Chart {
-        draw_chart(frame, sections[idx], app, target);
-        idx += 1;
-    }
-
-    // Draw error bar if there are errors
-    if has_error {
-        let error_msg: String = errors
-            .iter()
-            .map(|(name, err)| format!("{}: {}", name, err.short_label()))
-            .collect::<Vec<_>>()
-            .join(" | ");
-        let error_line = Line::from(vec![
-            Span::styled(" ⚠ ", Style::default().fg(Color::Red)),
-            Span::styled(
-                truncate_string(&error_msg, 60),
-                Style::default().fg(Color::Red),
-            ),
-        ]);
-        let error_para = Paragraph::new(error_line).style(Style::default().bg(Color::DarkGray));
-        frame.render_widget(error_para, sections[idx]);
     }
 
     // Draw sidebar if shown
     if let Some(sidebar) = sidebar_area {
         draw_stats_sidebar(frame, sidebar, app, target);
     }
+}
+
+fn draw_error_bar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    errors: &[(&String, &crate::probe::ProbeErrorKind)],
+) {
+    let error_msg: String = errors
+        .iter()
+        .map(|(name, err)| format!("{}: {}", name, err.short_label()))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let error_line = Line::from(vec![
+        Span::styled(" ⚠ ", Style::default().fg(Color::Red)),
+        Span::styled(
+            truncate_string(&error_msg, 60),
+            Style::default().fg(Color::Red),
+        ),
+    ]);
+    let error_para = Paragraph::new(error_line).style(Style::default().bg(Color::DarkGray));
+    frame.render_widget(error_para, area);
 }
 
 fn draw_stats_sidebar(
