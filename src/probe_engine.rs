@@ -423,6 +423,7 @@ fn fetch_tcp_info(handle: *mut curl_sys::CURL) -> Option<TcpInfoSnapshot> {
 mod tests {
     use super::BodyCollector;
     use curl::easy::Handler;
+    use std::time::Duration;
 
     #[test]
     fn body_collector_no_limit_counts_bytes() {
@@ -488,5 +489,31 @@ mod tests {
         assert!(!super::is_dns_timeout_message(
             "[28] Timeout was reached (Operation timed out after 10000 milliseconds)"
         ));
+    }
+
+    #[test]
+    fn parse_socket_addr_accepts_valid_values() {
+        let addr = super::parse_socket_addr(Some("127.0.0.1"), Some(443)).expect("addr");
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+        assert_eq!(addr.port(), 443);
+    }
+
+    #[test]
+    fn parse_socket_addr_rejects_invalid_values() {
+        assert!(super::parse_socket_addr(Some("not-an-ip"), Some(80)).is_none());
+        assert!(super::parse_socket_addr(None, Some(80)).is_none());
+        assert!(super::parse_socket_addr(Some("127.0.0.1"), None).is_none());
+    }
+
+    #[test]
+    fn saturating_sub_handles_underflow() {
+        let result = super::saturating_sub(Duration::from_millis(5), Duration::from_millis(10));
+        assert_eq!(result, Duration::from_millis(0));
+    }
+
+    #[test]
+    fn saturating_sub_returns_difference() {
+        let result = super::saturating_sub(Duration::from_millis(10), Duration::from_millis(4));
+        assert_eq!(result, Duration::from_millis(6));
     }
 }

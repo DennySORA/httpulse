@@ -392,6 +392,7 @@ fn parse_duration(input: &str) -> Option<std::time::Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn parse_profile_spec_accepts_tokens() {
@@ -443,5 +444,33 @@ mod tests {
     #[test]
     fn parse_target_url_rejects_empty_input() {
         assert!(parse_target_url("   ").is_none());
+    }
+
+    #[test]
+    fn parse_duration_accepts_millis_and_seconds() {
+        assert_eq!(parse_duration("150ms"), Some(Duration::from_millis(150)));
+        assert_eq!(parse_duration("2s"), Some(Duration::from_secs(2)));
+        assert_eq!(parse_duration("5"), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn parse_duration_rejects_invalid_values() {
+        assert!(parse_duration("invalid").is_none());
+    }
+
+    #[test]
+    fn apply_edit_command_returns_none_when_no_updates() {
+        let url = Url::parse("https://google.com").unwrap();
+        let target = TargetRuntime {
+            config: TargetConfig::new(url, default_profiles()),
+            paused: false,
+            last_ip: None,
+            profiles: Vec::new(),
+            view_mode: ProfileViewMode::Single,
+            selected_profile: 0,
+            pane_mode: TargetPaneMode::Split,
+        };
+
+        assert!(apply_edit_command(&target, "foo=bar dns=maybe").is_none());
     }
 }
