@@ -1244,22 +1244,10 @@ fn draw_target_pane(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split into main content and sidebar
-    let show_sidebar = inner.width > 80 && pane_mode == TargetPaneMode::Split;
-    let (main_area, sidebar_area) = if show_sidebar {
-        let h_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(50), Constraint::Length(26)])
-            .split(inner);
-        (h_chunks[0], Some(h_chunks[1]))
-    } else {
-        (inner, None)
-    };
-
     // Draw based on pane mode
     match pane_mode {
         TargetPaneMode::Split => {
-            // Split mode: [Summary | Metrics] on top, Chart below
+            // Split mode: [Summary | Metrics | Profile | Latency | Connection] on top, Chart below
             let mut v_constraints = vec![Constraint::Length(10), Constraint::Min(6)];
             if has_error {
                 v_constraints.push(Constraint::Length(2));
@@ -1267,16 +1255,25 @@ fn draw_target_pane(
             let v_sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(v_constraints)
-                .split(main_area);
+                .split(inner);
 
-            // Top row: Summary (left) | Metrics (right)
+            // Top row: Summary | Metrics | Profile | Latency | Connection
             let top_row = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(28), Constraint::Min(30)])
+                .constraints([
+                    Constraint::Length(24), // Summary
+                    Constraint::Min(36),    // Metrics
+                    Constraint::Length(18), // Profile
+                    Constraint::Length(18), // Latency
+                    Constraint::Length(20), // Connection
+                ])
                 .split(v_sections[0]);
 
             draw_summary_pane(frame, top_row[0], app, target);
             draw_metrics_table(frame, top_row[1], app, target);
+            draw_profile_pane(frame, top_row[2], target);
+            draw_latency_pane(frame, top_row[3], app, target);
+            draw_connection_pane(frame, top_row[4], target);
 
             // Bottom: Chart
             draw_chart(frame, v_sections[1], app, target);
@@ -1294,7 +1291,7 @@ fn draw_target_pane(
             let sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
-                .split(main_area);
+                .split(inner);
 
             draw_chart(frame, sections[0], app, target);
             if has_error {
@@ -1309,7 +1306,7 @@ fn draw_target_pane(
             let sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
-                .split(main_area);
+                .split(inner);
 
             draw_metrics_table(frame, sections[0], app, target);
             if has_error {
@@ -1324,18 +1321,13 @@ fn draw_target_pane(
             let sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
-                .split(main_area);
+                .split(inner);
 
             draw_summary_pane(frame, sections[0], app, target);
             if has_error {
                 draw_error_bar(frame, sections[1], &errors);
             }
         }
-    }
-
-    // Draw sidebar if shown
-    if let Some(sidebar) = sidebar_area {
-        draw_stats_sidebar(frame, sidebar, app, target);
     }
 }
 
@@ -1360,7 +1352,53 @@ fn draw_error_bar(
     frame.render_widget(error_para, area);
 }
 
-fn draw_stats_sidebar(
+fn draw_profile_pane(frame: &mut ratatui::Frame, area: Rect, target: &crate::app::TargetRuntime) {
+    let profile = match target.profiles.get(target.selected_profile) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let lines: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled("Name ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_string(&profile.config.name, 10),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("HTTP ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:?}", profile.config.http),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("TLS  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:?}", profile.config.tls),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Reuse", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {:?}", profile.config.conn_reuse),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title(" Profile ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
+    frame.render_widget(paragraph, area);
+}
+
+fn draw_latency_pane(
     frame: &mut ratatui::Frame,
     area: Rect,
     app: &AppState,
@@ -1375,131 +1413,109 @@ fn draw_stats_sidebar(
     let total_stats = aggregate.by_metric.get(&MetricKind::Total);
     let rtt_stats = aggregate.by_metric.get(&MetricKind::Rtt);
     let jitter_stats = aggregate.by_metric.get(&MetricKind::Jitter);
-    let retrans_stats = aggregate.by_metric.get(&MetricKind::Retrans);
 
-    let mut lines: Vec<Line> = vec![
-        Line::styled(
-            "─── Profile ───",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::from(vec![
-            Span::styled(" Name: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                truncate_string(&profile.config.name, 12),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" HTTP: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:?}", profile.config.http),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" TLS:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:?}", profile.config.tls),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
-        Line::from(""),
-        Line::styled(
-            "─── Latency ───",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
+    let mut lines: Vec<Line> = Vec::new();
 
-    // Add latency details
     if let Some(stats) = total_stats {
         if let Some(last) = stats.last {
             lines.push(Line::from(vec![
-                Span::styled(" Last:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Last ", Style::default().fg(Color::DarkGray)),
                 Span::styled(format_latency(last), style_for_latency(last)),
             ]));
         }
-        if let (Some(min), Some(max)) = (stats.min, stats.max) {
+        if let Some(min) = stats.min {
             lines.push(Line::from(vec![
-                Span::styled(" Min:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Min  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format_latency(min)),
             ]));
+        }
+        if let Some(max) = stats.max {
             lines.push(Line::from(vec![
-                Span::styled(" Max:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Max  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(format_latency(max), style_for_latency(max)),
             ]));
         }
-        lines.push(Line::from(vec![
-            Span::styled(" Samples:", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!(" {}", stats.n)),
-        ]));
     }
 
-    // Add RTT if available
     if let Some(stats) = rtt_stats {
         if let Some(mean) = stats.mean {
-            lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled(" RTT:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled("RTT  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format_latency(mean)),
             ]));
         }
     }
 
-    // Add Jitter if available
     if let Some(stats) = jitter_stats {
         if let Some(mean) = stats.mean {
             lines.push(Line::from(vec![
-                Span::styled(" Jitter:", Style::default().fg(Color::DarkGray)),
+                Span::styled("Jit  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format_latency(mean)),
             ]));
         }
     }
 
-    // Add Retrans if available
-    if let Some(stats) = retrans_stats {
-        if let Some(total) = stats.last {
-            if total > 0.0 {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled(" Retrans:", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!(" {:.0}", total), Style::default().fg(Color::Yellow)),
-                ]));
-            }
-        }
-    }
-
-    // Add connection info if available
-    if let Some(last_sample) = &profile.last_sample {
-        if let Some(remote) = &last_sample.remote {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(
-                "─── Connection ───",
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            lines.push(Line::from(vec![
-                Span::styled(" IP:    ", Style::default().fg(Color::DarkGray)),
-                Span::raw(truncate_string(&remote.ip().to_string(), 15)),
-            ]));
-        }
-        if let Some(alpn) = &last_sample.negotiated.alpn {
-            lines.push(Line::from(vec![
-                Span::styled(" ALPN:  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(alpn.clone()),
-            ]));
-        }
+    // Pad with empty lines if needed
+    while lines.len() < 4 {
+        lines.push(Line::from(""));
     }
 
     let paragraph = Paragraph::new(lines).block(
         Block::default()
-            .title(" Stats ")
+            .title(" Latency ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(Color::Green)),
+    );
+    frame.render_widget(paragraph, area);
+}
+
+fn draw_connection_pane(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    target: &crate::app::TargetRuntime,
+) {
+    let profile = match target.profiles.get(target.selected_profile) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(last_sample) = &profile.last_sample {
+        if let Some(remote) = &last_sample.remote {
+            lines.push(Line::from(vec![
+                Span::styled("IP   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(truncate_string(&remote.ip().to_string(), 12)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("Port ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{}", remote.port())),
+            ]));
+        }
+        if let Some(alpn) = &last_sample.negotiated.alpn {
+            lines.push(Line::from(vec![
+                Span::styled("ALPN ", Style::default().fg(Color::DarkGray)),
+                Span::raw(alpn.clone()),
+            ]));
+        }
+        if let Some(tls_ver) = &last_sample.negotiated.tls_version {
+            lines.push(Line::from(vec![
+                Span::styled("TLS  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(tls_ver.clone()),
+            ]));
+        }
+    }
+
+    // Pad with empty lines if needed
+    while lines.len() < 4 {
+        lines.push(Line::from(""));
+    }
+
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title(" Connection ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Magenta)),
     );
     frame.render_widget(paragraph, area);
 }
