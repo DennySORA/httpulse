@@ -1,20 +1,21 @@
-use crate::app::{AppState, ProfileViewMode, StatFocus, apply_edit_command, parse_profile_specs};
+use crate::app::{apply_edit_command, parse_profile_specs, AppState, ProfileViewMode, StatFocus};
 use crate::metrics::MetricKind;
 use crate::metrics_aggregate::ProfileKey;
 use crate::probe::ProbeSample;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use crossterm::{QueueableCommand, execute};
-use ratatui::Terminal;
+use crossterm::{execute, QueueableCommand};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Chart, Dataset, GraphType, List, ListItem, Paragraph, Row, Table,
+    Block, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, Padding, Paragraph, Row,
+    Table, Wrap,
 };
+use ratatui::Terminal;
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 use url::Url;
@@ -24,6 +25,8 @@ enum InputMode {
     Normal,
     AddTarget,
     EditTarget,
+    Help,
+    Settings,
 }
 
 pub fn run_ui(
@@ -49,27 +52,55 @@ pub fn run_ui(
 
         terminal.draw(|frame| {
             let size = frame.area();
-            let mut main_constraints = vec![Constraint::Min(3)];
-            if input_mode != InputMode::Normal {
-                main_constraints.push(Constraint::Length(3));
+
+            // Main layout: Header, Content, Input (optional), Footer
+            let mut constraints = vec![
+                Constraint::Length(1), // Header
+                Constraint::Min(10),   // Content
+            ];
+            if matches!(input_mode, InputMode::AddTarget | InputMode::EditTarget) {
+                constraints.push(Constraint::Length(3)); // Input bar
             }
+            constraints.push(Constraint::Length(1)); // Footer
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(main_constraints)
+                .constraints(constraints)
                 .split(size);
 
-            let main_area = chunks[0];
-            draw_main(frame, main_area, &app);
+            // Header bar
+            draw_header(frame, chunks[0], &app);
 
-            if input_mode != InputMode::Normal {
+            // Main content area
+            draw_main(frame, chunks[1], &app);
+
+            // Input bar (if in input mode)
+            let footer_idx = if matches!(input_mode, InputMode::AddTarget | InputMode::EditTarget) {
                 let prompt = match input_mode {
-                    InputMode::AddTarget => "add> url [profile1,profile2]",
-                    InputMode::EditTarget => "edit> interval=5s timeout=10s dns=on/off",
-                    InputMode::Normal => "",
+                    InputMode::AddTarget => " Add Target: <url> [profile1,profile2,...] ",
+                    InputMode::EditTarget => " Edit: interval=<time> timeout=<time> dns=on/off ",
+                    _ => "",
                 };
-                let input = Paragraph::new(input_buffer.clone())
-                    .block(Block::default().title(prompt).borders(Borders::ALL));
-                frame.render_widget(input, chunks[1]);
+                let input = Paragraph::new(Line::from(vec![
+                    Span::styled(prompt, Style::default().fg(Color::Yellow)),
+                    Span::raw(&input_buffer),
+                    Span::styled("█", Style::default().fg(Color::Gray)),
+                ]))
+                .style(Style::default().bg(Color::DarkGray));
+                frame.render_widget(input, chunks[2]);
+                3
+            } else {
+                2
+            };
+
+            // Footer with keybindings
+            draw_footer(frame, chunks[footer_idx], input_mode);
+
+            // Overlay popups
+            match input_mode {
+                InputMode::Help => draw_help_popup(frame, size),
+                InputMode::Settings => draw_settings_popup(frame, size, &app),
+                _ => {}
             }
         })?;
 
@@ -82,6 +113,12 @@ pub fn run_ui(
                         if handle_normal_key(key, &mut app, &mut input_mode, &mut input_buffer) {
                             should_quit = true;
                         }
+                    }
+                    InputMode::Help => {
+                        handle_help_key(key, &mut input_mode);
+                    }
+                    InputMode::Settings => {
+                        handle_settings_key(key, &mut input_mode);
                     }
                     _ => {
                         handle_input_key(
@@ -113,6 +150,383 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
     Ok(())
 }
 
+fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
+    let selected_metrics: Vec<_> = app.selected_metrics.iter().map(|m| m.label()).collect();
+    let metrics_str = if selected_metrics.is_empty() {
+        "none".to_string()
+    } else {
+        selected_metrics.join(",")
+    };
+
+    let header = Line::from(vec![
+        Span::styled(
+            " Monitor Network ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("│ "),
+        Span::styled("Window:", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {} ", app.window.label()),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw("│ "),
+        Span::styled("Stat:", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {:?} ", app.stat_focus),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw("│ "),
+        Span::styled("Metrics:", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {} ", metrics_str),
+            Style::default().fg(Color::Magenta),
+        ),
+        Span::raw("│ "),
+        Span::styled("Targets:", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {} ", app.targets.len()),
+            Style::default().fg(Color::White),
+        ),
+    ]);
+
+    let paragraph = Paragraph::new(header).style(Style::default().bg(Color::DarkGray));
+    frame.render_widget(paragraph, area);
+}
+
+fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
+    let hints = match mode {
+        InputMode::Normal => vec![
+            ("q", "Quit"),
+            ("?", "Help"),
+            ("S", "Settings"),
+            ("a", "Add"),
+            ("d", "Del"),
+            ("e", "Edit"),
+            ("p", "Pause"),
+            ("c", "Compare"),
+            ("s", "Stat"),
+            ("w", "Window"),
+            ("↑↓", "Select"),
+            ("Tab", "Profile"),
+            ("1-8", "Metrics"),
+        ],
+        InputMode::Help | InputMode::Settings => vec![("Esc", "Close"), ("q", "Close")],
+        InputMode::AddTarget => vec![("Enter", "Confirm"), ("Esc", "Cancel")],
+        InputMode::EditTarget => vec![("Enter", "Apply"), ("Esc", "Cancel")],
+    };
+
+    let spans: Vec<Span> = hints
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (key, desc))| {
+            let mut result = vec![
+                Span::styled(
+                    format!(" {} ", key),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{} ", desc), Style::default().fg(Color::White)),
+            ];
+            if i < hints.len() - 1 {
+                result.push(Span::raw(" "));
+            }
+            result
+        })
+        .collect();
+
+    let footer = Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::DarkGray));
+    frame.render_widget(footer, area);
+}
+
+fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
+    let popup_area = centered_rect(60, 80, area);
+
+    // Clear background
+    frame.render_widget(Clear, popup_area);
+
+    let help_text = vec![
+        Line::from(vec![Span::styled(
+            "  Keyboard Shortcuts  ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::styled("─── Navigation ───", Style::default().fg(Color::Yellow)),
+        Line::from(vec![
+            Span::styled("  ↑/↓       ", Style::default().fg(Color::Green)),
+            Span::raw("Select target"),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab       ", Style::default().fg(Color::Green)),
+            Span::raw("Cycle through profiles"),
+        ]),
+        Line::from(""),
+        Line::styled("─── Target Actions ───", Style::default().fg(Color::Yellow)),
+        Line::from(vec![
+            Span::styled("  a         ", Style::default().fg(Color::Green)),
+            Span::raw("Add new target"),
+        ]),
+        Line::from(vec![
+            Span::styled("  d         ", Style::default().fg(Color::Green)),
+            Span::raw("Delete selected target"),
+        ]),
+        Line::from(vec![
+            Span::styled("  e         ", Style::default().fg(Color::Green)),
+            Span::raw("Edit target settings"),
+        ]),
+        Line::from(vec![
+            Span::styled("  p         ", Style::default().fg(Color::Green)),
+            Span::raw("Pause/Resume probing"),
+        ]),
+        Line::from(""),
+        Line::styled("─── View Options ───", Style::default().fg(Color::Yellow)),
+        Line::from(vec![
+            Span::styled("  c         ", Style::default().fg(Color::Green)),
+            Span::raw("Toggle compare mode"),
+        ]),
+        Line::from(vec![
+            Span::styled("  s         ", Style::default().fg(Color::Green)),
+            Span::raw("Cycle stat focus (P50/P99/Mean)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  w         ", Style::default().fg(Color::Green)),
+            Span::raw("Cycle time window (1m/5m/15m/60m)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  1-8       ", Style::default().fg(Color::Green)),
+            Span::raw("Toggle metric series on chart"),
+        ]),
+        Line::from(""),
+        Line::styled("─── Metrics (1-8) ───", Style::default().fg(Color::Yellow)),
+        Line::from(vec![
+            Span::styled("  1 ", Style::default().fg(Color::Green)),
+            Span::raw("Total  "),
+            Span::styled("2 ", Style::default().fg(Color::Green)),
+            Span::raw("DNS  "),
+            Span::styled("3 ", Style::default().fg(Color::Green)),
+            Span::raw("Connect  "),
+            Span::styled("4 ", Style::default().fg(Color::Green)),
+            Span::raw("TLS"),
+        ]),
+        Line::from(vec![
+            Span::styled("  5 ", Style::default().fg(Color::Green)),
+            Span::raw("TTFB   "),
+            Span::styled("6 ", Style::default().fg(Color::Green)),
+            Span::raw("Download  "),
+            Span::styled("7 ", Style::default().fg(Color::Green)),
+            Span::raw("RTT  "),
+            Span::styled("8 ", Style::default().fg(Color::Green)),
+            Span::raw("Retrans"),
+        ]),
+        Line::from(""),
+        Line::styled("─── General ───", Style::default().fg(Color::Yellow)),
+        Line::from(vec![
+            Span::styled("  ?         ", Style::default().fg(Color::Green)),
+            Span::raw("Toggle this help"),
+        ]),
+        Line::from(vec![
+            Span::styled("  S         ", Style::default().fg(Color::Green)),
+            Span::raw("Open settings"),
+        ]),
+        Line::from(vec![
+            Span::styled("  q/Ctrl+C  ", Style::default().fg(Color::Green)),
+            Span::raw("Quit application"),
+        ]),
+        Line::from(""),
+        Line::styled(
+            "  Press Esc or ? to close  ",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+
+    let help = Paragraph::new(help_text)
+        .block(
+            Block::default()
+                .title(" Help ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .padding(Padding::horizontal(1)),
+        )
+        .style(Style::default().bg(Color::Black))
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(help, popup_area);
+}
+
+fn draw_settings_popup(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
+    let popup_area = centered_rect(50, 60, area);
+
+    // Clear background
+    frame.render_widget(Clear, popup_area);
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "  Global Settings  ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  UI Refresh Rate:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{} Hz", app.global.ui_refresh_hz),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Default Window:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.global.default_window.label(),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Link Capacity:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.global
+                    .link_capacity_mbps
+                    .map(|c| format!("{} Mbps", c))
+                    .unwrap_or_else(|| "Not set".to_string()),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  eBPF Enabled:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if app.global.ebpf_enabled { "Yes" } else { "No" },
+                Style::default().fg(if app.global.ebpf_enabled {
+                    Color::Green
+                } else {
+                    Color::Red
+                }),
+            ),
+        ]),
+        Line::from(""),
+    ];
+
+    // Selected target settings
+    if let Some(target) = app.selected_target() {
+        lines.push(Line::styled(
+            "─── Selected Target ───",
+            Style::default().fg(Color::Yellow),
+        ));
+        lines.push(Line::from(vec![
+            Span::styled("  URL:              ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_string(target.config.url.as_str(), 30),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Interval:         ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:.1}s", target.config.interval.as_secs_f64()),
+                Style::default().fg(Color::White),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Timeout:          ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:.1}s", target.config.timeout_total.as_secs_f64()),
+                Style::default().fg(Color::White),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  DNS Enabled:      ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if target.config.dns_enabled {
+                    "Yes"
+                } else {
+                    "No"
+                },
+                Style::default().fg(if target.config.dns_enabled {
+                    Color::Green
+                } else {
+                    Color::Red
+                }),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Status:           ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if target.paused { "Paused" } else { "Running" },
+                Style::default().fg(if target.paused {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                }),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Profiles:         ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", target.profiles.len()),
+                Style::default().fg(Color::White),
+            ),
+        ]));
+    } else {
+        lines.push(Line::styled(
+            "  No target selected",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "  Press Esc to close  ",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let settings = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Settings ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .padding(Padding::horizontal(1)),
+        )
+        .style(Style::default().bg(Color::Black))
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(settings, popup_area);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
+}
+
 fn handle_normal_key(
     key: KeyEvent,
     app: &mut AppState,
@@ -124,6 +538,12 @@ fn handle_normal_key(
     }
     match key.code {
         KeyCode::Char('q') => return true,
+        KeyCode::Char('?') => {
+            *input_mode = InputMode::Help;
+        }
+        KeyCode::Char('S') => {
+            *input_mode = InputMode::Settings;
+        }
         KeyCode::Char('a') => {
             *input_mode = InputMode::AddTarget;
             input_buffer.clear();
@@ -150,19 +570,18 @@ fn handle_normal_key(
         }
         KeyCode::Char('s') => app.cycle_stat_focus(),
         KeyCode::Char('w') => app.cycle_window(),
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') => {
             if app.selected_target + 1 < app.targets.len() {
                 app.selected_target += 1;
             }
         }
-        KeyCode::Up => {
+        KeyCode::Up | KeyCode::Char('k') => {
             app.selected_target = app.selected_target.saturating_sub(1);
         }
         KeyCode::Tab => {
             if let Some(target) = app.selected_target_mut() {
                 if !target.profiles.is_empty() {
-                    target.selected_profile =
-                        (target.selected_profile + 1) % target.profiles.len();
+                    target.selected_profile = (target.selected_profile + 1) % target.profiles.len();
                 }
             }
         }
@@ -177,6 +596,24 @@ fn handle_normal_key(
         _ => {}
     }
     false
+}
+
+fn handle_help_key(key: KeyEvent, input_mode: &mut InputMode) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+            *input_mode = InputMode::Normal;
+        }
+        _ => {}
+    }
+}
+
+fn handle_settings_key(key: KeyEvent, input_mode: &mut InputMode) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => {
+            *input_mode = InputMode::Normal;
+        }
+        _ => {}
+    }
 }
 
 fn handle_input_key(
@@ -205,7 +642,7 @@ fn handle_input_key(
                         }
                     }
                 }
-                InputMode::Normal => {}
+                InputMode::Normal | InputMode::Help | InputMode::Settings => {}
             }
             *input_mode = InputMode::Normal;
             input_buffer.clear();
@@ -238,7 +675,7 @@ fn parse_add_command(input: &str) -> Option<(Url, Option<Vec<crate::config::Prof
 fn draw_main(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(30), Constraint::Min(10)])
+        .constraints([Constraint::Length(32), Constraint::Min(10)])
         .split(area);
 
     draw_target_list(frame, chunks[0], app);
@@ -249,29 +686,84 @@ fn draw_target_list(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
     let items: Vec<ListItem> = app
         .targets
         .iter()
-        .map(|target| {
-            let status = if target.paused { "PAUSE" } else { "RUN" };
-            let line = Line::from(format!("{status} {}", target.config.url));
+        .enumerate()
+        .map(|(idx, target)| {
+            let status_style = if target.paused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            let status = if target.paused { "⏸" } else { "▶" };
+
+            let is_selected = idx == app.selected_target;
+            let line = Line::from(vec![
+                Span::styled(format!(" {} ", status), status_style),
+                Span::styled(
+                    truncate_string(target.config.url.host_str().unwrap_or("?"), 24),
+                    if is_selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    },
+                ),
+            ]);
             ListItem::new(line)
         })
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().title("Targets").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Targets ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        )
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol(">> ");
+        .highlight_symbol("│");
     let mut state = list_state(app.selected_target);
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_target_panes(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
     if app.targets.is_empty() {
-        let empty = Paragraph::new("No targets. Press 'a' to add.")
-            .block(Block::default().title("Details").borders(Borders::ALL));
+        let empty_lines = vec![
+            Line::from(""),
+            Line::styled(
+                "  No targets configured  ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  Press "),
+                Span::styled(
+                    " a ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to add a target"),
+            ]),
+            Line::from(""),
+            Line::styled(
+                "  Example: https://example.com h2+tls13+warm",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ];
+        let empty = Paragraph::new(empty_lines).block(
+            Block::default()
+                .title(" Details ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue)),
+        );
         frame.render_widget(empty, area);
         return;
     }
@@ -296,22 +788,45 @@ fn draw_target_pane(
     app: &AppState,
     target: &crate::app::TargetRuntime,
 ) {
-    let title = format!(
-        "{} [{}] {}",
-        target.config.url,
-        if target.paused { "PAUSE" } else { "RUN" },
-        match target.view_mode {
-            ProfileViewMode::Single => "single",
-            ProfileViewMode::Compare => "compare",
-        }
-    );
-    let block = Block::default().title(title).borders(Borders::ALL);
+    let status_indicator = if target.paused {
+        "⏸ PAUSED"
+    } else {
+        "▶ RUNNING"
+    };
+    let status_color = if target.paused {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
+
+    let view_mode_str = match target.view_mode {
+        ProfileViewMode::Single => "Single",
+        ProfileViewMode::Compare => "Compare",
+    };
+
+    let title = Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            truncate_string(target.config.url.as_str(), 40),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" │ "),
+        Span::styled(status_indicator, Style::default().fg(status_color)),
+        Span::raw(" │ "),
+        Span::styled(view_mode_str, Style::default().fg(Color::Magenta)),
+        Span::raw(" "),
+    ]);
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(6), Constraint::Min(6)])
+        .constraints([Constraint::Length(7), Constraint::Min(6)])
         .split(inner);
 
     draw_metrics_table(frame, sections[0], app, target);
@@ -345,17 +860,31 @@ fn draw_metrics_table(
     };
 
     let mut header_cells = vec![Span::styled(
-        "metric",
-        Style::default().add_modifier(Modifier::BOLD),
+        "Metric",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     )];
-    for profile in &profiles {
-        header_cells.push(Span::raw(profile.config.name.clone()));
+    for (idx, profile) in profiles.iter().enumerate() {
+        header_cells.push(Span::styled(
+            profile.config.name.clone(),
+            Style::default().fg(color_for_index(idx)),
+        ));
     }
-    let header = Row::new(header_cells);
+    let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
     let rows = metrics.iter().map(|metric| {
+        let is_selected = app.selected_metrics.contains(metric);
+        let metric_style = if is_selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
         let mut cells = Vec::new();
-        cells.push(Span::raw(metric.label()));
+        cells.push(Span::styled(metric.label(), metric_style));
         for profile in &profiles {
             let aggregate = app.target_aggregate(target, profile);
             let stats = aggregate.by_metric.get(metric);
@@ -365,9 +894,16 @@ fn draw_metrics_table(
         Row::new(cells)
     });
 
-    let table = Table::new(rows, vec![Constraint::Length(12); profiles.len() + 1])
-        .header(header)
-        .block(Block::default().title("metrics").borders(Borders::ALL));
+    let widths: Vec<Constraint> = std::iter::once(Constraint::Length(10))
+        .chain(profiles.iter().map(|_| Constraint::Length(14)))
+        .collect();
+
+    let table = Table::new(rows, widths).header(header).block(
+        Block::default()
+            .title(format!(" Metrics ({:?}) ", app.stat_focus))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
     frame.render_widget(table, area);
 }
 
@@ -433,6 +969,12 @@ fn draw_chart(
         max_y = 1.0;
     }
 
+    // Add 10% padding to y-axis
+    let y_range = max_y - min_y;
+    let y_padding = if y_range > 0.0 { y_range * 0.1 } else { 0.1 };
+    min_y = (min_y - y_padding).max(0.0);
+    max_y += y_padding;
+
     let datasets: Vec<Dataset> = series_specs
         .iter()
         .map(|spec| {
@@ -444,10 +986,41 @@ fn draw_chart(
         })
         .collect();
 
+    // Build legend from series names
+    let legend: String = series_specs
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
     let chart = Chart::new(datasets)
-        .block(Block::default().title("chart").borders(Borders::ALL))
-        .x_axis(ratatui::widgets::Axis::default().bounds([0.0, window_seconds]))
-        .y_axis(ratatui::widgets::Axis::default().bounds([min_y, max_y]));
+        .block(
+            Block::default()
+                .title(format!(" Chart [{}] ", app.window.label()))
+                .title_bottom(
+                    Line::from(format!(" {} ", legend)).style(Style::default().fg(Color::DarkGray)),
+                )
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+        .x_axis(
+            ratatui::widgets::Axis::default()
+                .bounds([0.0, window_seconds])
+                .labels(vec![
+                    Span::raw("0"),
+                    Span::raw(format!("{}s", window_seconds as u64 / 2)),
+                    Span::raw(format!("{}s", window_seconds as u64)),
+                ]),
+        )
+        .y_axis(
+            ratatui::widgets::Axis::default()
+                .bounds([min_y, max_y])
+                .labels(vec![
+                    Span::raw(format!("{:.0}", min_y)),
+                    Span::raw(format!("{:.0}", (min_y + max_y) / 2.0)),
+                    Span::raw(format!("{:.0}", max_y)),
+                ]),
+        );
     frame.render_widget(chart, area);
 }
 

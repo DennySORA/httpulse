@@ -1,8 +1,8 @@
-use crate::config::{GlobalConfig, ProfileConfig, TargetConfig, default_profiles};
+use crate::config::{default_profiles, GlobalConfig, ProfileConfig, TargetConfig};
 use crate::metrics::{MetricKind, WindowedAggregate};
 use crate::metrics_aggregate::{MetricsStore, ProfileKey};
 use crate::probe::{ProbeErrorKind, ProbeSample};
-use crate::runtime::{ControlMessage, WorkerHandle, spawn_profile_worker};
+use crate::runtime::{spawn_profile_worker, ControlMessage, WorkerHandle};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use url::Url;
@@ -309,7 +309,11 @@ pub fn apply_edit_command(target: &TargetRuntime, input: &str) -> Option<TargetC
         }
     }
 
-    if modified { Some(updated) } else { None }
+    if modified {
+        Some(updated)
+    } else {
+        None
+    }
 }
 
 fn parse_duration(input: &str) -> Option<std::time::Duration> {

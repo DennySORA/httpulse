@@ -70,8 +70,10 @@ impl MetricsStore {
 
         if let Some(total_values) = metric_values.get(&MetricKind::Total) {
             if total_values.len() > 1 {
-                let jitter_values: Vec<f64> =
-                    total_values.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+                let jitter_values: Vec<f64> = total_values
+                    .windows(2)
+                    .map(|w| (w[1] - w[0]).abs())
+                    .collect();
                 metric_values.insert(MetricKind::Jitter, jitter_values);
             }
         }

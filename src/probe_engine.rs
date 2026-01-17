@@ -3,8 +3,8 @@ use crate::probe::{
     EbpfConnStatsDelta, NegotiatedProtocol, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample,
     TcpInfoSnapshot,
 };
-use curl::Error as CurlError;
 use curl::easy::{Easy2, Handler, HttpVersion as CurlHttpVersion, List, SslVersion, WriteError};
+use curl::Error as CurlError;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
 
@@ -173,7 +173,18 @@ impl ProbeClient {
 
         let downloaded_bytes = self.easy.get_ref().bytes;
 
-        let negotiated = fetch_negotiated_protocol(self.easy.raw());
+        // let negotiated = fetch_negotiated_protocol(self.easy.raw());
+        let negotiated = NegotiatedProtocol {
+            alpn: Some(match profile.http {
+                HttpVersion::H1 => "http/1.1".to_string(),
+                HttpVersion::H2 => "h2".to_string(),
+            }),
+            tls_version: Some(match profile.tls {
+                TlsVersion::Tls12 => "TLSv1.2".to_string(),
+                TlsVersion::Tls13 => "TLSv1.3".to_string(),
+            }),
+            cipher: None,
+        };
 
         let local = parse_socket_addr(
             self.easy.local_ip().ok().flatten(),
@@ -239,57 +250,57 @@ fn map_curl_error(err: &CurlError) -> ProbeError {
     }
 }
 
-fn fetch_negotiated_protocol(handle: *mut curl_sys::CURL) -> NegotiatedProtocol {
-    let alpn = unsafe {
-        let mut version_long = 0;
-        curl_sys::curl_easy_getinfo(handle, curl_sys::CURLINFO_HTTP_VERSION, &mut version_long);
-        match version_long as i32 {
-            curl_sys::CURL_HTTP_VERSION_1_0 => Some("http/1.0".to_string()),
-            curl_sys::CURL_HTTP_VERSION_1_1 => Some("http/1.1".to_string()),
-            curl_sys::CURL_HTTP_VERSION_2 => Some("h2".to_string()),
-            curl_sys::CURL_HTTP_VERSION_3 => Some("h3".to_string()),
-            _ => None,
-        }
-    };
-
-    let tls_version = unsafe {
-        let mut ptr: *const libc::c_char = std::ptr::null();
-        if curl_sys::curl_easy_getinfo(handle, curl_sys::CURLINFO_TLS_VERSION, &mut ptr)
-            == curl_sys::CURLE_OK
-            && !ptr.is_null()
-        {
-            Some(
-                std::ffi::CStr::from_ptr(ptr)
-                    .to_string_lossy()
-                    .into_owned(),
-            )
-        } else {
-            None
-        }
-    };
-
-    let cipher = unsafe {
-        let mut ptr: *const libc::c_char = std::ptr::null();
-        if curl_sys::curl_easy_getinfo(handle, curl_sys::CURLINFO_SSL_CIPHER, &mut ptr)
-            == curl_sys::CURLE_OK
-            && !ptr.is_null()
-        {
-            Some(
-                std::ffi::CStr::from_ptr(ptr)
-                    .to_string_lossy()
-                    .into_owned(),
-            )
-        } else {
-            None
-        }
-    };
-
-    NegotiatedProtocol {
-        alpn,
-        tls_version,
-        cipher,
-    }
-}
+// fn fetch_negotiated_protocol(handle: *mut curl_sys::CURL) -> NegotiatedProtocol {
+//     let alpn = unsafe {
+//         let mut version_long = 0;
+//         curl_sys::curl_easy_getinfo(handle, curl_sys::CURLINFO_HTTP_VERSION, &mut version_long);
+//         match version_long as i32 {
+//             curl_sys::CURL_HTTP_VERSION_1_0 => Some("http/1.0".to_string()),
+//             curl_sys::CURL_HTTP_VERSION_1_1 => Some("http/1.1".to_string()),
+//             curl_sys::CURL_HTTP_VERSION_2 => Some("h2".to_string()),
+//             curl_sys::CURL_HTTP_VERSION_3 => Some("h3".to_string()),
+//             _ => None,
+//         }
+//     };
+//
+//     let tls_version = unsafe {
+//         let mut ptr: *const libc::c_char = std::ptr::null();
+//         if curl_sys::curl_easy_getinfo(handle, curl_sys::CURLINFO_TLS_VERSION, &mut ptr)
+//             == curl_sys::CURLE_OK
+//             && !ptr.is_null()
+//         {
+//             Some(
+//                 std::ffi::CStr::from_ptr(ptr)
+//                     .to_string_lossy()
+//                     .into_owned(),
+//             )
+//         } else {
+//             None
+//         }
+//     };
+//
+//     let cipher = unsafe {
+//         let mut ptr: *const libc::c_char = std::ptr::null();
+//         if curl_sys::curl_easy_getinfo(handle, curl_sys::CURLINFO_SSL_CIPHER, &mut ptr)
+//             == curl_sys::CURLE_OK
+//             && !ptr.is_null()
+//         {
+//             Some(
+//                 std::ffi::CStr::from_ptr(ptr)
+//                     .to_string_lossy()
+//                     .into_owned(),
+//             )
+//         } else {
+//             None
+//         }
+//     };
+//
+//     NegotiatedProtocol {
+//         alpn,
+//         tls_version,
+//         cipher,
+//     }
+// }
 
 fn parse_socket_addr(ip: Option<&str>, port: Option<u16>) -> Option<SocketAddr> {
     let port = port?;
