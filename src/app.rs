@@ -3,7 +3,7 @@ use crate::metrics::{MetricKind, WindowedAggregate};
 use crate::metrics_aggregate::{MetricsStore, ProfileKey};
 use crate::probe::{ProbeErrorKind, ProbeSample};
 use crate::runtime::{spawn_profile_worker, ControlMessage, WorkerHandle};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::net::IpAddr;
 use url::Url;
 
@@ -18,6 +18,7 @@ pub enum TargetPaneMode {
     Split,
     Chart,
     Metrics,
+    Summary,
 }
 
 impl TargetPaneMode {
@@ -25,7 +26,8 @@ impl TargetPaneMode {
         match self {
             TargetPaneMode::Split => TargetPaneMode::Chart,
             TargetPaneMode::Chart => TargetPaneMode::Metrics,
-            TargetPaneMode::Metrics => TargetPaneMode::Split,
+            TargetPaneMode::Metrics => TargetPaneMode::Summary,
+            TargetPaneMode::Summary => TargetPaneMode::Split,
         }
     }
 
@@ -34,6 +36,7 @@ impl TargetPaneMode {
             TargetPaneMode::Split => "Split",
             TargetPaneMode::Chart => "Chart",
             TargetPaneMode::Metrics => "Metrics",
+            TargetPaneMode::Summary => "Summary",
         }
     }
 }
@@ -63,6 +66,13 @@ pub struct ProfileRuntime {
     pub worker: WorkerHandle,
     pub last_sample: Option<ProbeSample>,
     pub last_error: Option<ProbeErrorKind>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GlobalSummary {
+    pub requests: u64,
+    pub successes: u64,
+    pub errors: BTreeMap<ProbeErrorKind, u64>,
 }
 
 impl AppState {
@@ -160,7 +170,7 @@ impl AppState {
                 profile.last_sample = Some(sample.clone());
                 profile.last_error = match &sample.result {
                     crate::probe::ProbeResult::Ok => None,
-                    crate::probe::ProbeResult::Err(err) => Some(err.kind.clone()),
+                    crate::probe::ProbeResult::Err(err) => Some(err.kind),
                 };
                 let max_points = target.config.sampling.max_points_per_window;
                 self.metrics.push_sample(key, sample, max_points);
@@ -244,6 +254,22 @@ impl AppState {
             &target.config.sampling,
             self.global.link_capacity_mbps,
         )
+    }
+
+    pub fn target_summary(&self, target: &TargetRuntime) -> GlobalSummary {
+        let mut summary = GlobalSummary::default();
+        for profile in &target.profiles {
+            let aggregate = self.target_aggregate(target, profile);
+            if let Some(total_stats) = aggregate.by_metric.get(&MetricKind::Total) {
+                summary.requests += total_stats.n;
+            }
+            for (kind, count) in &aggregate.error_breakdown {
+                *summary.errors.entry(*kind).or_insert(0) += count;
+            }
+        }
+        let total_errors: u64 = summary.errors.values().sum();
+        summary.successes = summary.requests.saturating_sub(total_errors);
+        summary
     }
 }
 

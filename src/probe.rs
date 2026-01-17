@@ -29,7 +29,7 @@ pub enum ProbeResult {
     Err(ProbeError),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ProbeErrorKind {
     DnsTimeout,
     DnsNxDomain,
@@ -68,6 +68,27 @@ impl ProbeErrorKind {
             ProbeErrorKind::HttpStatusError => "http_status_error",
             ProbeErrorKind::ReadTimeout => "read_timeout",
             ProbeErrorKind::IoError => "io_error",
+        }
+    }
+
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            ProbeErrorKind::DnsTimeout => "DNS Timeout",
+            ProbeErrorKind::DnsNxDomain => "NXDOMAIN",
+            ProbeErrorKind::DnsServFail => "SERVFAIL",
+            ProbeErrorKind::DnsOther => "DNS Error",
+            ProbeErrorKind::ConnectTimeout => "Connect Timeout",
+            ProbeErrorKind::ConnectRefused => "Connection Refused",
+            ProbeErrorKind::ConnectNoRoute => "No Route",
+            ProbeErrorKind::ConnectOther => "Connect Error",
+            ProbeErrorKind::TlsHandshakeFailed => "TLS Handshake",
+            ProbeErrorKind::TlsVersionMismatch => "TLS Version",
+            ProbeErrorKind::AlpnFailed => "ALPN Failed",
+            ProbeErrorKind::HttpTimeout => "HTTP Timeout",
+            ProbeErrorKind::HttpProtocolError => "HTTP Protocol",
+            ProbeErrorKind::HttpStatusError => "HTTP Status",
+            ProbeErrorKind::ReadTimeout => "Read Timeout",
+            ProbeErrorKind::IoError => "I/O Error",
         }
     }
 

@@ -1244,17 +1244,33 @@ fn draw_target_pane(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Split into main content and sidebar
+    let show_sidebar = inner.width > 60 && pane_mode == TargetPaneMode::Split;
+    let (main_area, sidebar_area) = if show_sidebar {
+        let h_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(40), Constraint::Length(26)])
+            .split(inner);
+        (h_chunks[0], Some(h_chunks[1]))
+    } else {
+        (inner, None)
+    };
+
     // Layout: metrics table and/or chart, plus optional error bar
     let mut constraints = Vec::new();
     match pane_mode {
         TargetPaneMode::Split => {
             constraints.push(Constraint::Length(7));
+            constraints.push(Constraint::Length(10));
             constraints.push(Constraint::Min(6));
         }
         TargetPaneMode::Chart => {
             constraints.push(Constraint::Min(10));
         }
         TargetPaneMode::Metrics => {
+            constraints.push(Constraint::Min(10));
+        }
+        TargetPaneMode::Summary => {
             constraints.push(Constraint::Min(10));
         }
     }
@@ -1265,14 +1281,18 @@ fn draw_target_pane(
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
-        .split(inner);
+        .split(main_area);
 
     let mut idx = 0usize;
-    if pane_mode != TargetPaneMode::Chart {
+    if pane_mode == TargetPaneMode::Split || pane_mode == TargetPaneMode::Summary {
+        draw_summary_pane(frame, sections[idx], app, target);
+        idx += 1;
+    }
+    if pane_mode == TargetPaneMode::Split || pane_mode == TargetPaneMode::Metrics {
         draw_metrics_table(frame, sections[idx], app, target);
         idx += 1;
     }
-    if pane_mode != TargetPaneMode::Metrics {
+    if pane_mode == TargetPaneMode::Split || pane_mode == TargetPaneMode::Chart {
         draw_chart(frame, sections[idx], app, target);
         idx += 1;
     }
@@ -1281,7 +1301,7 @@ fn draw_target_pane(
     if has_error {
         let error_msg: String = errors
             .iter()
-            .map(|(name, err)| format!("{}: {:?}", name, err))
+            .map(|(name, err)| format!("{}: {}", name, err.short_label()))
             .collect::<Vec<_>>()
             .join(" | ");
         let error_line = Line::from(vec![
@@ -1293,6 +1313,288 @@ fn draw_target_pane(
         ]);
         let error_para = Paragraph::new(error_line).style(Style::default().bg(Color::DarkGray));
         frame.render_widget(error_para, sections[idx]);
+    }
+
+    // Draw sidebar if shown
+    if let Some(sidebar) = sidebar_area {
+        draw_stats_sidebar(frame, sidebar, app, target);
+    }
+}
+
+fn draw_stats_sidebar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    app: &AppState,
+    target: &crate::app::TargetRuntime,
+) {
+    let profile = match target.profiles.get(target.selected_profile) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let aggregate = app.target_aggregate(target, profile);
+    let total_stats = aggregate.by_metric.get(&MetricKind::Total);
+    let rtt_stats = aggregate.by_metric.get(&MetricKind::Rtt);
+    let jitter_stats = aggregate.by_metric.get(&MetricKind::Jitter);
+    let retrans_stats = aggregate.by_metric.get(&MetricKind::Retrans);
+
+    let mut lines: Vec<Line> = vec![
+        Line::styled(
+            "─── Profile ───",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::from(vec![
+            Span::styled(" Name: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_string(&profile.config.name, 12),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" HTTP: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:?}", profile.config.http),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" TLS:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:?}", profile.config.tls),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(""),
+        Line::styled(
+            "─── Latency ───",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    // Add latency details
+    if let Some(stats) = total_stats {
+        if let Some(last) = stats.last {
+            lines.push(Line::from(vec![
+                Span::styled(" Last:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_latency(last), style_for_latency(last)),
+            ]));
+        }
+        if let (Some(min), Some(max)) = (stats.min, stats.max) {
+            lines.push(Line::from(vec![
+                Span::styled(" Min:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_latency(min)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" Max:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_latency(max), style_for_latency(max)),
+            ]));
+        }
+        lines.push(Line::from(vec![
+            Span::styled(" Samples:", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!(" {}", stats.n)),
+        ]));
+    }
+
+    // Add RTT if available
+    if let Some(stats) = rtt_stats {
+        if let Some(mean) = stats.mean {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(" RTT:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_latency(mean)),
+            ]));
+        }
+    }
+
+    // Add Jitter if available
+    if let Some(stats) = jitter_stats {
+        if let Some(mean) = stats.mean {
+            lines.push(Line::from(vec![
+                Span::styled(" Jitter:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_latency(mean)),
+            ]));
+        }
+    }
+
+    // Add Retrans if available
+    if let Some(stats) = retrans_stats {
+        if let Some(total) = stats.last {
+            if total > 0.0 {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled(" Retrans:", Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!(" {:.0}", total), Style::default().fg(Color::Yellow)),
+                ]));
+            }
+        }
+    }
+
+    // Add connection info if available
+    if let Some(last_sample) = &profile.last_sample {
+        if let Some(remote) = &last_sample.remote {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                "─── Connection ───",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::from(vec![
+                Span::styled(" IP:    ", Style::default().fg(Color::DarkGray)),
+                Span::raw(truncate_string(&remote.ip().to_string(), 15)),
+            ]));
+        }
+        if let Some(alpn) = &last_sample.negotiated.alpn {
+            lines.push(Line::from(vec![
+                Span::styled(" ALPN:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(alpn.clone()),
+            ]));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title(" Stats ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    frame.render_widget(paragraph, area);
+}
+
+fn draw_summary_pane(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    app: &AppState,
+    target: &crate::app::TargetRuntime,
+) {
+    let summary = app.target_summary(target);
+    let success_rate = if summary.requests > 0 {
+        (summary.successes as f64 / summary.requests as f64) * 100.0
+    } else {
+        100.0
+    };
+    let error_rate = 100.0 - success_rate;
+
+    // Get latency stats from the first profile (or aggregate)
+    let latency_stats = target
+        .profiles
+        .get(target.selected_profile)
+        .and_then(|profile| {
+            let aggregate = app.target_aggregate(target, profile);
+            aggregate.by_metric.get(&MetricKind::Total).cloned()
+        });
+
+    let mut rows = vec![
+        Row::new(vec![
+            Cell::from("Requests"),
+            Cell::from(format_count(summary.requests)),
+        ]),
+        Row::new(vec![
+            Cell::from("Success"),
+            Cell::from(format!("{:.1}%", success_rate)).style(style_for_success_rate(success_rate)),
+        ]),
+        Row::new(vec![
+            Cell::from("Errors"),
+            Cell::from(format!("{:.1}%", error_rate)).style(style_for_error_rate(error_rate)),
+        ]),
+    ];
+
+    // Add latency stats
+    if let Some(stats) = &latency_stats {
+        if let Some(p50) = stats.p50 {
+            rows.push(Row::new(vec![
+                Cell::from("Latency P50"),
+                Cell::from(format_latency(p50)),
+            ]));
+        }
+        if let Some(p99) = stats.p99 {
+            rows.push(Row::new(vec![
+                Cell::from("Latency P99"),
+                Cell::from(format_latency(p99)).style(style_for_latency(p99)),
+            ]));
+        }
+    }
+
+    // Add error breakdown (compact)
+    let total_errors: u64 = summary.errors.values().sum();
+    if total_errors > 0 {
+        let error_summary: String = summary
+            .errors
+            .iter()
+            .take(2)
+            .map(|(e, c)| format!("{}:{}", e.short_label(), c))
+            .collect::<Vec<_>>()
+            .join(" ");
+        rows.push(Row::new(vec![
+            Cell::from("Errors").style(Style::default().fg(Color::Red)),
+            Cell::from(error_summary).style(Style::default().fg(Color::Red)),
+        ]));
+    }
+
+    let widths = [Constraint::Length(12), Constraint::Min(10)];
+
+    let table = Table::new(rows, widths).column_spacing(1).block(
+        Block::default()
+            .title(format!(" Summary [{}] ", app.window.label()))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    frame.render_widget(table, area);
+}
+
+fn format_count(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1000 {
+        format!("{:.1}K", count as f64 / 1000.0)
+    } else {
+        count.to_string()
+    }
+}
+
+fn format_latency(ms: f64) -> String {
+    if ms >= 1000.0 {
+        format!("{:.2}s", ms / 1000.0)
+    } else if ms >= 100.0 {
+        format!("{:.0}ms", ms)
+    } else if ms >= 10.0 {
+        format!("{:.1}ms", ms)
+    } else {
+        format!("{:.2}ms", ms)
+    }
+}
+
+fn style_for_success_rate(rate: f64) -> Style {
+    if rate >= 99.0 {
+        Style::default().fg(Color::Green)
+    } else if rate >= 95.0 {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Red)
+    }
+}
+
+fn style_for_error_rate(rate: f64) -> Style {
+    if rate <= 1.0 {
+        Style::default().fg(Color::Green)
+    } else if rate <= 5.0 {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Red)
+    }
+}
+
+fn style_for_latency(ms: f64) -> Style {
+    if ms <= 100.0 {
+        Style::default().fg(Color::Green)
+    } else if ms <= 500.0 {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Red)
     }
 }
 
@@ -1347,8 +1649,15 @@ fn draw_metrics_table(
             Style::default().fg(Color::White)
         };
 
+        let unit = metric.unit();
+        let label_with_unit = if unit.is_empty() {
+            metric.label().to_string()
+        } else {
+            format!("{} ({})", metric.label(), unit)
+        };
+
         let mut cells = Vec::new();
-        cells.push(Span::styled(metric.label(), metric_style));
+        cells.push(Span::styled(label_with_unit, metric_style));
         for profile in &profiles {
             let aggregate = app.target_aggregate(target, profile);
             let stats = aggregate.by_metric.get(metric);
@@ -1357,7 +1666,7 @@ fn draw_metrics_table(
         Row::new(cells)
     });
 
-    let widths: Vec<Constraint> = std::iter::once(Constraint::Length(10))
+    let widths: Vec<Constraint> = std::iter::once(Constraint::Length(14))
         .chain(profiles.iter().map(|_| Constraint::Length(18)))
         .collect();
 
@@ -1383,9 +1692,11 @@ fn draw_chart(
     let mut timeout_events: Vec<f64> = Vec::new();
     let mut min_y = f64::INFINITY;
     let mut max_y = f64::NEG_INFINITY;
+    let mut y_axis_unit = "";
 
     match target.view_mode {
         ProfileViewMode::Compare => {
+            y_axis_unit = app.selected_metric.unit();
             for (idx, profile) in target.profiles.iter().enumerate() {
                 let points = app.metrics.timeseries(
                     ProfileKey {
@@ -1417,6 +1728,10 @@ fn draw_chart(
                 None => return,
             };
             let selected: Vec<MetricKind> = app.selected_metrics.iter().copied().collect();
+            if let Some(metric) = selected.first() {
+                y_axis_unit = metric.unit();
+            }
+
             for (idx, metric) in selected.iter().enumerate() {
                 let points = app.metrics.timeseries(
                     ProfileKey {
@@ -1506,44 +1821,98 @@ fn draw_chart(
         );
     }
 
+    let chart_title = if target.view_mode == ProfileViewMode::Compare {
+        format!(
+            " Chart ({}) [{}] ",
+            app.selected_metric.label(),
+            app.window.label()
+        )
+    } else {
+        format!(" Chart [{}] ", app.window.label())
+    };
+
+    let y_labels = format_y_axis_labels(min_y, max_y, y_axis_unit);
+
     let chart = Chart::new(datasets)
         .block(
             Block::default()
-                .title(format!(" Chart [{}] ", app.window.label()))
-                .title_bottom(Line::from(legend_spans))
+                .title(chart_title)
+                .title_bottom(Line::from(legend_spans).alignment(Alignment::Center))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
         .style(Style::default().bg(Color::Black))
         .x_axis(
             ratatui::widgets::Axis::default()
+                .title("Time (ago)")
+                .style(Style::default().fg(Color::Gray))
                 .bounds([0.0, window_seconds])
                 .labels(vec![
-                    Span::raw("0"),
-                    Span::raw(format!("{}s", window_seconds as u64 / 2)),
-                    Span::raw(format!("{}s", window_seconds as u64)),
+                    Span::styled("now", Style::default().fg(Color::Green)),
+                    Span::raw(format!("-{}s", window_seconds as u64 / 2)),
+                    Span::raw(format!("-{}s", window_seconds as u64)),
                 ]),
         )
         .y_axis(
             ratatui::widgets::Axis::default()
+                .title(y_axis_unit)
+                .style(Style::default().fg(Color::Gray))
                 .bounds([min_y, max_y])
-                .labels(vec![
-                    Span::raw(format!("{:.0}", min_y)),
-                    Span::raw(format!("{:.0}", (min_y + max_y) / 2.0)),
-                    Span::raw(format!("{:.0}", max_y)),
-                ]),
+                .labels(y_labels),
         );
     frame.render_widget(chart, area);
 }
 
+fn format_y_axis_labels(min_y: f64, max_y: f64, unit: &str) -> Vec<Span<'static>> {
+    let mid_y = (min_y + max_y) / 2.0;
+
+    let format_value = |v: f64| -> String {
+        match unit {
+            "ms" => {
+                if v >= 1000.0 {
+                    format!("{:.1}s", v / 1000.0)
+                } else if v >= 10.0 {
+                    format!("{:.0}ms", v)
+                } else {
+                    format!("{:.1}ms", v)
+                }
+            }
+            "%" => format!("{:.0}%", v * 100.0),
+            "Mbps" => {
+                if v >= 1_000_000.0 {
+                    format!("{:.1}Mb", v / 1_000_000.0)
+                } else if v >= 1000.0 {
+                    format!("{:.0}Kb", v / 1000.0)
+                } else {
+                    format!("{:.0}b", v)
+                }
+            }
+            "" => {
+                if v >= 1000.0 {
+                    format!("{:.1}K", v / 1000.0)
+                } else {
+                    format!("{:.0}", v)
+                }
+            }
+            _ => format!("{:.0}{}", v, unit),
+        }
+    };
+
+    vec![
+        Span::raw(format_value(min_y)),
+        Span::raw(format_value(mid_y)),
+        Span::raw(format_value(max_y)),
+    ]
+}
+
 fn format_stat_triplet(metric: MetricKind, stats: Option<&crate::metrics::MetricStats>) -> String {
-    let p50 = format_metric_compact(metric, stats.and_then(|stats| stats.p50));
-    let p99 = format_metric_compact(metric, stats.and_then(|stats| stats.p99));
-    let mean = format_metric_compact(metric, stats.and_then(|stats| stats.mean));
+    let p50 = format_metric_value(metric, stats.and_then(|stats| stats.p50));
+    let p99 = format_metric_value(metric, stats.and_then(|stats| stats.p99));
+    let mean = format_metric_value(metric, stats.and_then(|stats| stats.mean));
     format!("{p50}/{p99}/{mean}")
 }
 
-fn format_metric_compact(metric: MetricKind, value: Option<f64>) -> String {
+fn format_metric_value(metric: MetricKind, value: Option<f64>) -> String {
     let value = match value {
         Some(value) => value,
         None => return "—".to_string(),
@@ -1558,12 +1927,33 @@ fn format_metric_compact(metric: MetricKind, value: Option<f64>) -> String {
         | MetricKind::Total
         | MetricKind::Rtt
         | MetricKind::RttVar
-        | MetricKind::Jitter => format!("{value:.1}"),
-        MetricKind::GoodputBps => format!("{:.1}M", value / 1_000_000.0),
-        MetricKind::BandwidthUtilization | MetricKind::ProbeLossRate => {
-            format!("{:.0}%", value * 100.0)
+        | MetricKind::Jitter => {
+            if value < 1.0 {
+                format!("{:.1}", value)
+            } else if value < 1000.0 {
+                format!("{:.0}", value)
+            } else {
+                format!("{:.1}s", value / 1000.0)
+            }
         }
-        _ => format!("{value:.0}"),
+        MetricKind::GoodputBps => {
+            let mbps = value / 1_000_000.0;
+            if mbps < 1.0 {
+                format!("{:.0}K", value / 1000.0)
+            } else {
+                format!("{:.1}M", mbps)
+            }
+        }
+        MetricKind::BandwidthUtilization | MetricKind::ProbeLossRate => {
+            format!("{:.1}%", value * 100.0)
+        }
+        _ => {
+            if value < 1000.0 {
+                format!("{:.0}", value)
+            } else {
+                format!("{:.1}K", value / 1000.0)
+            }
+        }
     }
 }
 

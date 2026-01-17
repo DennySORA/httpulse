@@ -62,7 +62,7 @@ impl MetricsStore {
                     }
                     ProbeResult::Err(err) => {
                         error_samples += 1;
-                        *error_breakdown.entry(err.kind.clone()).or_insert(0) += 1;
+                        *error_breakdown.entry(err.kind).or_insert(0) += 1;
                     }
                 }
             }

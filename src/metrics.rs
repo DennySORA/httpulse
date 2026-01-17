@@ -25,6 +25,25 @@ pub enum MetricKind {
     Ssthresh,
 }
 
+impl MetricKind {
+    pub fn unit(&self) -> &'static str {
+        match self {
+            MetricKind::Dns
+            | MetricKind::Connect
+            | MetricKind::Tls
+            | MetricKind::Ttfb
+            | MetricKind::Download
+            | MetricKind::Total
+            | MetricKind::Rtt
+            | MetricKind::RttVar
+            | MetricKind::Jitter => "ms",
+            MetricKind::GoodputBps => "Mbps",
+            MetricKind::BandwidthUtilization | MetricKind::ProbeLossRate => "%",
+            _ => "",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MetricStats {
     pub n: u64,
