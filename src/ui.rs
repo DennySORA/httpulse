@@ -1,4 +1,6 @@
-use crate::app::{apply_edit_command, parse_profile_specs, AppState, ProfileViewMode, StatFocus};
+use crate::app::{
+    apply_edit_command, parse_profile_specs, parse_target_url, AppState, ProfileViewMode, StatFocus,
+};
 use crate::metrics::MetricKind;
 use crate::metrics_aggregate::ProfileKey;
 use crate::probe::ProbeSample;
@@ -27,6 +29,7 @@ enum InputMode {
     EditTarget,
     Help,
     Settings,
+    ConfirmDelete,
 }
 
 pub fn run_ui(
@@ -100,6 +103,7 @@ pub fn run_ui(
             match input_mode {
                 InputMode::Help => draw_help_popup(frame, size),
                 InputMode::Settings => draw_settings_popup(frame, size, &app),
+                InputMode::ConfirmDelete => draw_confirm_delete_popup(frame, size, &app),
                 _ => {}
             }
         })?;
@@ -119,6 +123,9 @@ pub fn run_ui(
                     }
                     InputMode::Settings => {
                         handle_settings_key(key, &mut input_mode);
+                    }
+                    InputMode::ConfirmDelete => {
+                        handle_confirm_delete_key(key, &mut app, &mut input_mode);
                     }
                     _ => {
                         handle_input_key(
@@ -215,6 +222,7 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
         InputMode::Help | InputMode::Settings => vec![("Esc", "Close"), ("q", "Close")],
         InputMode::AddTarget => vec![("Enter", "Confirm"), ("Esc", "Cancel")],
         InputMode::EditTarget => vec![("Enter", "Apply"), ("Esc", "Cancel")],
+        InputMode::ConfirmDelete => vec![("y", "Yes, Delete"), ("n/Esc", "Cancel")],
     };
 
     let spans: Vec<Span> = hints
@@ -471,6 +479,51 @@ fn draw_settings_popup(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
                 Style::default().fg(Color::White),
             ),
         ]));
+
+        // Profile details
+        if !target.profiles.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                "─── Profile Details ───",
+                Style::default().fg(Color::Yellow),
+            ));
+            for (idx, profile) in target.profiles.iter().enumerate() {
+                let is_selected = idx == target.selected_profile;
+                let indicator = if is_selected { "▸" } else { " " };
+                let has_error = profile.last_error.is_some();
+                let status_icon = if has_error { "⚠" } else { "✓" };
+                let status_color = if has_error { Color::Red } else { Color::Green };
+
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} ", indicator),
+                        Style::default().fg(if is_selected {
+                            Color::Yellow
+                        } else {
+                            Color::DarkGray
+                        }),
+                    ),
+                    Span::styled(
+                        format!("{} ", status_icon),
+                        Style::default().fg(status_color),
+                    ),
+                    Span::styled(&profile.config.name, Style::default().fg(Color::Cyan)),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("      ", Style::default()),
+                    Span::styled(
+                        format!(
+                            "{} {} {} {}",
+                            profile.config.http,
+                            profile.config.tls,
+                            profile.config.conn_reuse,
+                            profile.config.method
+                        ),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+        }
     } else {
         lines.push(Line::styled(
             "  No target selected",
@@ -527,6 +580,52 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
+fn draw_confirm_delete_popup(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
+    let popup_area = centered_rect(40, 25, area);
+    frame.render_widget(Clear, popup_area);
+
+    let target_name = app
+        .selected_target()
+        .map(|t| t.config.url.as_str())
+        .unwrap_or("Unknown");
+
+    let lines = vec![
+        Line::from(""),
+        Line::styled(
+            "  Delete this target?  ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                truncate_string(target_name, 30),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  Press "),
+            Span::styled(" y ", Style::default().fg(Color::Black).bg(Color::Red)),
+            Span::raw(" to delete, "),
+            Span::styled(" n ", Style::default().fg(Color::Black).bg(Color::Green)),
+            Span::raw(" to cancel"),
+        ]),
+    ];
+
+    let popup = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Confirm Delete ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red)),
+        )
+        .style(Style::default().bg(Color::Black));
+
+    frame.render_widget(popup, popup_area);
+}
+
 fn handle_normal_key(
     key: KeyEvent,
     app: &mut AppState,
@@ -554,7 +653,7 @@ fn handle_normal_key(
         }
         KeyCode::Char('d') => {
             if !app.targets.is_empty() {
-                app.remove_target(app.selected_target);
+                *input_mode = InputMode::ConfirmDelete;
             }
         }
         KeyCode::Char('p') => {
@@ -616,6 +715,19 @@ fn handle_settings_key(key: KeyEvent, input_mode: &mut InputMode) {
     }
 }
 
+fn handle_confirm_delete_key(key: KeyEvent, app: &mut AppState, input_mode: &mut InputMode) {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.remove_target(app.selected_target);
+            *input_mode = InputMode::Normal;
+        }
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            *input_mode = InputMode::Normal;
+        }
+        _ => {}
+    }
+}
+
 fn handle_input_key(
     key: KeyEvent,
     app: &mut AppState,
@@ -642,7 +754,10 @@ fn handle_input_key(
                         }
                     }
                 }
-                InputMode::Normal | InputMode::Help | InputMode::Settings => {}
+                InputMode::Normal
+                | InputMode::Help
+                | InputMode::Settings
+                | InputMode::ConfirmDelete => {}
             }
             *input_mode = InputMode::Normal;
             input_buffer.clear();
@@ -663,7 +778,7 @@ fn handle_input_key(
 fn parse_add_command(input: &str) -> Option<(Url, Option<Vec<crate::config::ProfileConfig>>)> {
     let mut parts = input.split_whitespace();
     let url_text = parts.next()?;
-    let url = Url::parse(url_text).ok()?;
+    let url = parse_target_url(url_text)?;
     let rest = parts.collect::<Vec<_>>().join(" ");
     if rest.is_empty() {
         Some((url, None))
@@ -688,12 +803,16 @@ fn draw_target_list(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
         .iter()
         .enumerate()
         .map(|(idx, target)| {
-            let status_style = if target.paused {
-                Style::default().fg(Color::Yellow)
+            // Check if any profile has an error
+            let has_error = target.profiles.iter().any(|p| p.last_error.is_some());
+
+            let (status, status_style) = if target.paused {
+                ("⏸", Style::default().fg(Color::Yellow))
+            } else if has_error {
+                ("⚠", Style::default().fg(Color::Red))
             } else {
-                Style::default().fg(Color::Green)
+                ("▶", Style::default().fg(Color::Green))
             };
-            let status = if target.paused { "⏸" } else { "▶" };
 
             let is_selected = idx == app.selected_target;
             let line = Line::from(vec![
@@ -704,6 +823,8 @@ fn draw_target_list(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD)
+                    } else if has_error {
+                        Style::default().fg(Color::Red)
                     } else {
                         Style::default().fg(Color::White)
                     },
@@ -754,7 +875,7 @@ fn draw_target_panes(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
             ]),
             Line::from(""),
             Line::styled(
-                "  Example: https://example.com h2+tls13+warm",
+                "  Example: https://google.com h2+tls13+warm",
                 Style::default().fg(Color::DarkGray),
             ),
         ];
@@ -788,13 +909,25 @@ fn draw_target_pane(
     app: &AppState,
     target: &crate::app::TargetRuntime,
 ) {
+    // Check for errors
+    let errors: Vec<_> = target
+        .profiles
+        .iter()
+        .filter_map(|p| p.last_error.as_ref().map(|e| (&p.config.name, e)))
+        .collect();
+    let has_error = !errors.is_empty();
+
     let status_indicator = if target.paused {
         "⏸ PAUSED"
+    } else if has_error {
+        "⚠ ERROR"
     } else {
         "▶ RUNNING"
     };
     let status_color = if target.paused {
         Color::Yellow
+    } else if has_error {
+        Color::Red
     } else {
         Color::Green
     };
@@ -817,20 +950,45 @@ fn draw_target_pane(
         Span::raw(" "),
     ]);
 
+    let border_color = if has_error { Color::Red } else { Color::Blue };
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(border_color));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Layout: metrics table, chart, and optional error bar
+    let mut constraints = vec![Constraint::Length(7), Constraint::Min(6)];
+    if has_error {
+        constraints.push(Constraint::Length(2));
+    }
+
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(6)])
+        .constraints(constraints)
         .split(inner);
 
     draw_metrics_table(frame, sections[0], app, target);
     draw_chart(frame, sections[1], app, target);
+
+    // Draw error bar if there are errors
+    if has_error {
+        let error_msg: String = errors
+            .iter()
+            .map(|(name, err)| format!("{}: {:?}", name, err))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let error_line = Line::from(vec![
+            Span::styled(" ⚠ ", Style::default().fg(Color::Red)),
+            Span::styled(
+                truncate_string(&error_msg, 60),
+                Style::default().fg(Color::Red),
+            ),
+        ]);
+        let error_para = Paragraph::new(error_line).style(Style::default().bg(Color::DarkGray));
+        frame.render_widget(error_para, sections[2]);
+    }
 }
 
 fn draw_metrics_table(

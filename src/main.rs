@@ -1,8 +1,7 @@
 use clap::Parser;
-use monitor_network::app::AppState;
+use monitor_network::app::{parse_target_url, AppState};
 use monitor_network::config::{EbpfMode, GlobalConfig};
 use monitor_network::ui::run_ui;
-use url::Url;
 
 #[derive(Parser, Debug)]
 #[command(name = "monitor_network")]
@@ -32,13 +31,13 @@ fn main() -> std::io::Result<()> {
     let mut app = AppState::new(global);
 
     let targets = if args.target.is_empty() {
-        vec!["https://example.com".to_string()]
+        vec!["https://google.com".to_string()]
     } else {
         args.target
     };
 
     for target in targets {
-        if let Ok(url) = Url::parse(&target) {
+        if let Some(url) = parse_target_url(&target) {
             app.add_target(url, None, sample_tx.clone());
         }
     }

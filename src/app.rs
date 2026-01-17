@@ -231,6 +231,18 @@ impl AppState {
     }
 }
 
+pub fn parse_target_url(input: &str) -> Option<Url> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains("://") {
+        Url::parse(trimmed).ok()
+    } else {
+        Url::parse(&format!("https://{trimmed}")).ok()
+    }
+}
+
 pub fn parse_profile_specs(input: &str) -> Vec<ProfileConfig> {
     let mut profiles = Vec::new();
     for raw in input.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -353,7 +365,7 @@ mod tests {
 
     #[test]
     fn apply_edit_command_updates_target() {
-        let url = Url::parse("https://example.com").unwrap();
+        let url = Url::parse("https://google.com").unwrap();
         let target = TargetRuntime {
             config: TargetConfig::new(url, default_profiles()),
             paused: false,
@@ -368,5 +380,25 @@ mod tests {
         assert_eq!(updated.interval, std::time::Duration::from_secs(3));
         assert_eq!(updated.timeout_total, std::time::Duration::from_secs(7));
         assert!(!updated.dns_enabled);
+    }
+
+    #[test]
+    fn parse_target_url_adds_default_scheme() {
+        let url = parse_target_url("google.com").expect("url should parse");
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("google.com"));
+    }
+
+    #[test]
+    fn parse_target_url_accepts_host_and_port() {
+        let url = parse_target_url("localhost:8080").expect("url should parse");
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("localhost"));
+        assert_eq!(url.port_or_known_default(), Some(8080));
+    }
+
+    #[test]
+    fn parse_target_url_rejects_empty_input() {
+        assert!(parse_target_url("   ").is_none());
     }
 }
