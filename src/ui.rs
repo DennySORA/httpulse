@@ -1545,8 +1545,8 @@ fn draw_summary_pane(
 
     let mut rows = vec![
         Row::new(vec![
-            Cell::from("Requests"),
-            Cell::from(format_count(summary.requests)),
+            Cell::from("Samples"),
+            Cell::from(format_count(summary.samples)),
         ]),
         Row::new(vec![
             Cell::from("Success"),
@@ -1555,6 +1555,11 @@ fn draw_summary_pane(
         Row::new(vec![
             Cell::from("Errors"),
             Cell::from(format!("{:.1}%", error_rate)).style(style_for_error_rate(error_rate)),
+        ]),
+        Row::new(vec![
+            Cell::from("Timeouts"),
+            Cell::from(format_count(summary.timeouts))
+                .style(style_for_timeout_count(summary.timeouts)),
         ]),
     ];
 
@@ -1647,6 +1652,16 @@ fn style_for_latency(ms: f64) -> Style {
     if ms <= 100.0 {
         Style::default().fg(Color::Green)
     } else if ms <= 500.0 {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Red)
+    }
+}
+
+fn style_for_timeout_count(count: u64) -> Style {
+    if count == 0 {
+        Style::default().fg(Color::Green)
+    } else if count <= 3 {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::Red)

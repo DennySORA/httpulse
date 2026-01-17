@@ -70,8 +70,10 @@ pub struct ProfileRuntime {
 
 #[derive(Clone, Debug, Default)]
 pub struct GlobalSummary {
+    pub samples: u64,
     pub requests: u64,
     pub successes: u64,
+    pub timeouts: u64,
     pub errors: BTreeMap<ProbeErrorKind, u64>,
 }
 
@@ -260,6 +262,10 @@ impl AppState {
         let mut summary = GlobalSummary::default();
         for profile in &target.profiles {
             let aggregate = self.target_aggregate(target, profile);
+            // ProbeLossRate's n contains total samples (success + error)
+            if let Some(loss_stats) = aggregate.by_metric.get(&MetricKind::ProbeLossRate) {
+                summary.samples += loss_stats.n;
+            }
             if let Some(total_stats) = aggregate.by_metric.get(&MetricKind::Total) {
                 summary.requests += total_stats.n;
             }
@@ -269,6 +275,12 @@ impl AppState {
         }
         let total_errors: u64 = summary.errors.values().sum();
         summary.successes = summary.requests.saturating_sub(total_errors);
+        summary.timeouts = summary
+            .errors
+            .iter()
+            .filter(|(kind, _)| kind.is_timeout())
+            .map(|(_, count)| *count)
+            .sum();
         summary
     }
 }
