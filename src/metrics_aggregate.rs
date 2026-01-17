@@ -1,6 +1,6 @@
 use crate::config::{ProfileId, SamplingConfig, TargetId, WindowSpec};
 use crate::metrics::{MetricKind, MetricStats, WindowedAggregate};
-use crate::probe::{ProbeResult, ProbeSample};
+use crate::probe::{ProbeErrorKind, ProbeResult, ProbeSample};
 use hdrhistogram::Histogram;
 use std::collections::{HashMap, VecDeque};
 use std::time::SystemTime;
@@ -132,6 +132,33 @@ impl MetricsStore {
 
         points
     }
+
+    pub fn timeout_events(&self, key: ProfileKey, window: WindowSpec) -> Vec<f64> {
+        let window_seconds = window.duration().as_secs_f64();
+        let cutoff = SystemTime::now()
+            .checked_sub(window.duration())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut points = Vec::new();
+
+        if let Some(samples) = self.samples.get(&key) {
+            for sample in samples.iter().filter(|s| s.ts >= cutoff) {
+                if let ProbeResult::Err(err) = &sample.result {
+                    if is_timeout_error(&err.kind) {
+                        if let Ok(age) = SystemTime::now().duration_since(sample.ts) {
+                            let x = (window_seconds - age.as_secs_f64()).max(0.0);
+                            points.push(x);
+                        }
+                    }
+                }
+            }
+        }
+
+        points
+    }
+}
+
+fn is_timeout_error(kind: &ProbeErrorKind) -> bool {
+    kind.is_timeout()
 }
 
 fn compute_stats(values: &[f64], sampling: &SamplingConfig, use_histogram: bool) -> MetricStats {
@@ -359,5 +386,67 @@ impl MetricKind {
                 | MetricKind::RttVar
                 | MetricKind::Jitter
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MetricsStore, ProfileKey};
+    use crate::config::WindowSpec;
+    use crate::probe::{NegotiatedProtocol, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample};
+    use std::time::{Duration, SystemTime};
+    use uuid::Uuid;
+
+    fn error_sample(kind: ProbeErrorKind) -> ProbeSample {
+        ProbeSample {
+            ts: SystemTime::now(),
+            target_id: Uuid::new_v4(),
+            profile_id: Uuid::new_v4(),
+            result: ProbeResult::Err(ProbeError {
+                kind,
+                message: "error".to_string(),
+            }),
+            http_status: None,
+            negotiated: NegotiatedProtocol {
+                alpn: None,
+                tls_version: None,
+                cipher: None,
+            },
+            t_dns: None,
+            t_connect: Duration::from_millis(0),
+            t_tls: None,
+            t_ttfb: Duration::from_millis(0),
+            t_download: Duration::from_millis(0),
+            t_total: Duration::from_millis(0),
+            downloaded_bytes: 0,
+            local: None,
+            remote: None,
+            tcp_info: None,
+            ebpf: None,
+        }
+    }
+
+    #[test]
+    fn timeout_events_only_include_timeouts() {
+        let mut store = MetricsStore::new();
+        let target_id = Uuid::new_v4();
+        let profile_id = Uuid::new_v4();
+        let key = ProfileKey {
+            target_id,
+            profile_id,
+        };
+
+        let mut timeout_sample = error_sample(ProbeErrorKind::HttpTimeout);
+        timeout_sample.target_id = target_id;
+        timeout_sample.profile_id = profile_id;
+        store.push_sample(key, timeout_sample, 16);
+
+        let mut non_timeout = error_sample(ProbeErrorKind::HttpStatusError);
+        non_timeout.target_id = target_id;
+        non_timeout.profile_id = profile_id;
+        store.push_sample(key, non_timeout, 16);
+
+        let events = store.timeout_events(key, WindowSpec::M1);
+        assert_eq!(events.len(), 1);
     }
 }

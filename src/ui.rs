@@ -1,5 +1,6 @@
 use crate::app::{
     apply_edit_command, parse_profile_specs, parse_target_url, AppState, ProfileViewMode,
+    TargetPaneMode,
 };
 use crate::metrics::MetricKind;
 use crate::metrics_aggregate::ProfileKey;
@@ -12,6 +13,7 @@ use crossterm::{execute, QueueableCommand};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Cell, Chart, Clear, Dataset, GraphType, List, ListItem, Padding, Paragraph,
@@ -29,15 +31,14 @@ enum SettingsField {
     TargetInterval,
     TargetTimeout,
     TargetDnsEnabled,
+    TargetPane,
     TargetPaused,
-    TargetShowChart,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputMode {
     Normal,
     AddTarget,
-    EditTarget,
     Help,
     Settings,
     SettingsEdit(SettingsField),
@@ -128,7 +129,7 @@ pub fn run_ui(
                 Constraint::Length(1), // Header
                 Constraint::Min(10),   // Content
             ];
-            if matches!(input_mode, InputMode::AddTarget | InputMode::EditTarget) {
+            if matches!(input_mode, InputMode::AddTarget) {
                 constraints.push(Constraint::Length(3)); // Input bar
             }
             constraints.push(Constraint::Length(1)); // Footer
@@ -145,10 +146,9 @@ pub fn run_ui(
             draw_main(frame, chunks[1], &app);
 
             // Input bar (if in input mode)
-            let footer_idx = if matches!(input_mode, InputMode::AddTarget | InputMode::EditTarget) {
+            let footer_idx = if matches!(input_mode, InputMode::AddTarget) {
                 let prompt = match input_mode {
                     InputMode::AddTarget => " Add Target: <url> [profile1,profile2,...] ",
-                    InputMode::EditTarget => " Edit: interval=<time> timeout=<time> dns=on/off ",
                     _ => "",
                 };
                 let input = Paragraph::new(Line::from(vec![
@@ -308,7 +308,7 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
             ("e", "Edit"),
             ("p", "Pause"),
             ("c", "Compare"),
-            ("g", "Chart"),
+            ("g", "Pane"),
             ("w", "Window"),
             ("Up/Down", "Select"),
             ("Tab", "Profile"),
@@ -323,7 +323,6 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
         ],
         InputMode::SettingsEdit(_) => vec![("Enter", "Apply"), ("Esc", "Cancel")],
         InputMode::AddTarget => vec![("Enter", "Confirm"), ("Esc", "Cancel")],
-        InputMode::EditTarget => vec![("Enter", "Apply"), ("Esc", "Cancel")],
         InputMode::ConfirmDelete => vec![("y", "Yes, Delete"), ("n/Esc", "Cancel")],
     };
 
@@ -387,7 +386,7 @@ fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  e         ", Style::default().fg(Color::Green)),
-            Span::raw("Edit target settings"),
+            Span::raw("Edit target (Settings)"),
         ]),
         Line::from(vec![
             Span::styled("  p         ", Style::default().fg(Color::Green)),
@@ -401,7 +400,7 @@ fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  g         ", Style::default().fg(Color::Green)),
-            Span::raw("Toggle chart visibility"),
+            Span::raw("Cycle right pane (Split/Chart/Metrics)"),
         ]),
         Line::from(vec![
             Span::styled("  w         ", Style::default().fg(Color::Green)),
@@ -640,15 +639,11 @@ fn settings_rows(app: &AppState) -> Vec<SettingsRow> {
             action: "Enter to toggle",
         });
         rows.push(SettingsRow {
-            field: SettingsField::TargetShowChart,
+            field: SettingsField::TargetPane,
             scope: "Target",
-            label: "Chart",
-            value: if target.show_chart {
-                "On".to_string()
-            } else {
-                "Off".to_string()
-            },
-            action: "Enter to toggle",
+            label: "Pane",
+            value: target.pane_mode.label().to_string(),
+            action: "Enter to cycle",
         });
         rows.push(SettingsRow {
             field: SettingsField::TargetPaused,
@@ -673,8 +668,8 @@ fn settings_edit_prompt(field: SettingsField) -> &'static str {
         SettingsField::TargetInterval => "Set probe interval (e.g. 5s): ",
         SettingsField::TargetTimeout => "Set timeout (e.g. 10s): ",
         SettingsField::TargetDnsEnabled
-        | SettingsField::TargetPaused
-        | SettingsField::TargetShowChart => "Press Enter to toggle: ",
+        | SettingsField::TargetPane
+        | SettingsField::TargetPaused => "Press Enter to toggle: ",
     }
 }
 
@@ -695,8 +690,8 @@ fn seed_settings_input(app: &AppState, field: SettingsField) -> String {
             .map(|target| format!("{}s", target.config.timeout_total.as_secs()))
             .unwrap_or_default(),
         SettingsField::TargetDnsEnabled
-        | SettingsField::TargetPaused
-        | SettingsField::TargetShowChart => String::new(),
+        | SettingsField::TargetPane
+        | SettingsField::TargetPaused => String::new(),
     }
 }
 
@@ -819,8 +814,9 @@ fn handle_normal_key(
             input_buffer.clear();
         }
         KeyCode::Char('e') => {
-            *input_mode = InputMode::EditTarget;
-            input_buffer.clear();
+            *input_mode = InputMode::Settings;
+            settings_state.selected = 0;
+            settings_state.clear_notice();
         }
         KeyCode::Char('d') => {
             if !app.targets.is_empty() {
@@ -838,7 +834,7 @@ fn handle_normal_key(
                 };
             }
         }
-        KeyCode::Char('g') => app.toggle_chart(app.selected_target),
+        KeyCode::Char('g') => app.cycle_pane_mode(app.selected_target),
         KeyCode::Char('w') => app.cycle_window(),
         KeyCode::Down | KeyCode::Char('j') => {
             if app.selected_target + 1 < app.targets.len() {
@@ -911,8 +907,8 @@ fn handle_settings_key(
                             app.update_target_config(app.selected_target, updated);
                         }
                     }
-                    SettingsField::TargetShowChart => {
-                        app.toggle_chart(app.selected_target);
+                    SettingsField::TargetPane => {
+                        app.cycle_pane_mode(app.selected_target);
                     }
                     SettingsField::TargetPaused => {
                         app.toggle_pause(app.selected_target);
@@ -995,8 +991,8 @@ fn handle_settings_edit_key(
                     }
                 }
                 SettingsField::TargetDnsEnabled
-                | SettingsField::TargetPaused
-                | SettingsField::TargetShowChart => {}
+                | SettingsField::TargetPane
+                | SettingsField::TargetPaused => {}
             }
 
             if applied {
@@ -1047,13 +1043,6 @@ fn handle_input_key(
                 InputMode::AddTarget => {
                     if let Some((url, profiles)) = parse_add_command(input_buffer) {
                         app.add_target(url, profiles, sample_tx.clone());
-                    }
-                }
-                InputMode::EditTarget => {
-                    if let Some(target) = app.selected_target() {
-                        if let Some(updated) = apply_edit_command(target, input_buffer) {
-                            app.update_target_config(app.selected_target, updated);
-                        }
                     }
                 }
                 InputMode::Normal
@@ -1192,17 +1181,8 @@ fn draw_target_panes(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
         return;
     }
 
-    let count = app.targets.len() as u32;
-    let constraints = (0..count)
-        .map(|_| Constraint::Ratio(1, count))
-        .collect::<Vec<_>>();
-    let panes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(area);
-
-    for (pane, target) in panes.iter().zip(app.targets.iter()) {
-        draw_target_pane(frame, *pane, app, target);
+    if let Some(target) = app.selected_target() {
+        draw_target_pane(frame, area, app, target);
     }
 }
 
@@ -1219,7 +1199,7 @@ fn draw_target_pane(
         .filter_map(|p| p.last_error.as_ref().map(|e| (&p.config.name, e)))
         .collect();
     let has_error = !errors.is_empty();
-    let show_chart = target.show_chart;
+    let pane_mode = target.pane_mode;
 
     let status_indicator = if target.paused {
         "⏸ PAUSED"
@@ -1251,6 +1231,8 @@ fn draw_target_pane(
         Span::styled(status_indicator, Style::default().fg(status_color)),
         Span::raw(" │ "),
         Span::styled(view_mode_str, Style::default().fg(Color::Magenta)),
+        Span::raw(" │ "),
+        Span::styled(pane_mode.label(), Style::default().fg(Color::Yellow)),
         Span::raw(" "),
     ]);
 
@@ -1262,12 +1244,19 @@ fn draw_target_pane(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Layout: metrics table, chart (or placeholder), and optional error bar
-    let mut constraints = vec![Constraint::Length(7)];
-    if show_chart {
-        constraints.push(Constraint::Min(6));
-    } else {
-        constraints.push(Constraint::Length(3));
+    // Layout: metrics table and/or chart, plus optional error bar
+    let mut constraints = Vec::new();
+    match pane_mode {
+        TargetPaneMode::Split => {
+            constraints.push(Constraint::Length(7));
+            constraints.push(Constraint::Min(6));
+        }
+        TargetPaneMode::Chart => {
+            constraints.push(Constraint::Min(10));
+        }
+        TargetPaneMode::Metrics => {
+            constraints.push(Constraint::Min(10));
+        }
     }
     if has_error {
         constraints.push(Constraint::Length(2));
@@ -1278,16 +1267,18 @@ fn draw_target_pane(
         .constraints(constraints)
         .split(inner);
 
-    draw_metrics_table(frame, sections[0], app, target);
-    if show_chart {
-        draw_chart(frame, sections[1], app, target);
-    } else {
-        draw_chart_placeholder(frame, sections[1]);
+    let mut idx = 0usize;
+    if pane_mode != TargetPaneMode::Chart {
+        draw_metrics_table(frame, sections[idx], app, target);
+        idx += 1;
+    }
+    if pane_mode != TargetPaneMode::Metrics {
+        draw_chart(frame, sections[idx], app, target);
+        idx += 1;
     }
 
     // Draw error bar if there are errors
     if has_error {
-        let error_idx = sections.len().saturating_sub(1);
         let error_msg: String = errors
             .iter()
             .map(|(name, err)| format!("{}: {:?}", name, err))
@@ -1301,7 +1292,7 @@ fn draw_target_pane(
             ),
         ]);
         let error_para = Paragraph::new(error_line).style(Style::default().bg(Color::DarkGray));
-        frame.render_widget(error_para, sections[error_idx]);
+        frame.render_widget(error_para, sections[idx]);
     }
 }
 
@@ -1389,6 +1380,7 @@ fn draw_chart(
 
     let window_seconds = app.window.duration().as_secs_f64();
     let mut series_specs: Vec<SeriesSpec> = Vec::new();
+    let mut timeout_events: Vec<f64> = Vec::new();
     let mut min_y = f64::INFINITY;
     let mut max_y = f64::NEG_INFINITY;
 
@@ -1410,6 +1402,13 @@ fn draw_chart(
                     color: color_for_index(idx),
                     points,
                 });
+                timeout_events.extend(app.metrics.timeout_events(
+                    ProfileKey {
+                        target_id: target.config.id,
+                        profile_id: profile.config.id,
+                    },
+                    app.window,
+                ));
             }
         }
         ProfileViewMode::Single => {
@@ -1435,6 +1434,13 @@ fn draw_chart(
                     points,
                 });
             }
+            timeout_events.extend(app.metrics.timeout_events(
+                ProfileKey {
+                    target_id: target.config.id,
+                    profile_id: profile.config.id,
+                },
+                app.window,
+            ));
         }
     }
 
@@ -1449,6 +1455,13 @@ fn draw_chart(
     min_y = (min_y - y_padding).max(0.0);
     max_y += y_padding;
 
+    let timeout_y = if max_y > min_y {
+        max_y - (max_y - min_y) * 0.05
+    } else {
+        max_y
+    };
+    let timeout_points: Vec<(f64, f64)> = timeout_events.iter().map(|x| (*x, timeout_y)).collect();
+
     let datasets: Vec<Dataset> = series_specs
         .iter()
         .map(|spec| {
@@ -1461,7 +1474,7 @@ fn draw_chart(
         .collect();
 
     // Build color-coded legend
-    let legend_spans: Vec<Span> = series_specs
+    let mut legend_spans: Vec<Span> = series_specs
         .iter()
         .enumerate()
         .flat_map(|(i, spec)| {
@@ -1475,6 +1488,23 @@ fn draw_chart(
             spans
         })
         .collect();
+
+    let mut datasets = datasets;
+    if !timeout_points.is_empty() {
+        if !legend_spans.is_empty() {
+            legend_spans.push(Span::styled("  ", Style::default()));
+        }
+        legend_spans.push(Span::styled("● ", Style::default().fg(Color::Red)));
+        legend_spans.push(Span::styled("Timeout", Style::default().fg(Color::Red)));
+        datasets.push(
+            Dataset::default()
+                .name("Timeout".to_string())
+                .graph_type(GraphType::Scatter)
+                .marker(symbols::Marker::Dot)
+                .style(Style::default().fg(Color::Red))
+                .data(&timeout_points),
+        );
+    }
 
     let chart = Chart::new(datasets)
         .block(
@@ -1504,17 +1534,6 @@ fn draw_chart(
                 ]),
         );
     frame.render_widget(chart, area);
-}
-
-fn draw_chart_placeholder(frame: &mut ratatui::Frame, area: Rect) {
-    frame.render_widget(Clear, area);
-    let text = Paragraph::new(Line::from(vec![
-        Span::styled(" Chart hidden ", Style::default().fg(Color::DarkGray)),
-        Span::styled(" (press g) ", Style::default().fg(Color::Yellow)),
-    ]))
-    .alignment(Alignment::Center)
-    .style(Style::default().bg(Color::Black));
-    frame.render_widget(text, area);
 }
 
 fn format_stat_triplet(metric: MetricKind, stats: Option<&crate::metrics::MetricStats>) -> String {

@@ -13,6 +13,31 @@ pub enum ProfileViewMode {
     Compare,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetPaneMode {
+    Split,
+    Chart,
+    Metrics,
+}
+
+impl TargetPaneMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            TargetPaneMode::Split => TargetPaneMode::Chart,
+            TargetPaneMode::Chart => TargetPaneMode::Metrics,
+            TargetPaneMode::Metrics => TargetPaneMode::Split,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TargetPaneMode::Split => "Split",
+            TargetPaneMode::Chart => "Chart",
+            TargetPaneMode::Metrics => "Metrics",
+        }
+    }
+}
+
 pub struct AppState {
     pub global: GlobalConfig,
     pub metrics: MetricsStore,
@@ -30,7 +55,7 @@ pub struct TargetRuntime {
     pub profiles: Vec<ProfileRuntime>,
     pub view_mode: ProfileViewMode,
     pub selected_profile: usize,
-    pub show_chart: bool,
+    pub pane_mode: TargetPaneMode,
 }
 
 pub struct ProfileRuntime {
@@ -82,7 +107,7 @@ impl AppState {
             profiles: profile_runtimes,
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
-            show_chart: true,
+            pane_mode: TargetPaneMode::Split,
         });
         self.selected_target = self.targets.len().saturating_sub(1);
     }
@@ -180,9 +205,9 @@ impl AppState {
         }
     }
 
-    pub fn toggle_chart(&mut self, index: usize) {
+    pub fn cycle_pane_mode(&mut self, index: usize) {
         if let Some(target) = self.targets.get_mut(index) {
-            target.show_chart = !target.show_chart;
+            target.pane_mode = target.pane_mode.cycle();
         }
     }
 
@@ -364,7 +389,7 @@ mod tests {
             profiles: Vec::new(),
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
-            show_chart: true,
+            pane_mode: TargetPaneMode::Split,
         };
 
         let updated =

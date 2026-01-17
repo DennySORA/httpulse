@@ -70,6 +70,16 @@ impl ProbeErrorKind {
             ProbeErrorKind::IoError => "io_error",
         }
     }
+
+    pub fn is_timeout(&self) -> bool {
+        matches!(
+            self,
+            ProbeErrorKind::DnsTimeout
+                | ProbeErrorKind::ConnectTimeout
+                | ProbeErrorKind::HttpTimeout
+                | ProbeErrorKind::ReadTimeout
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -101,4 +111,19 @@ pub struct EbpfConnStatsDelta {
     pub retrans: u32,
     pub dup_acks: u32,
     pub conn_events: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProbeErrorKind;
+
+    #[test]
+    fn probe_error_kind_timeout_detection() {
+        assert!(ProbeErrorKind::DnsTimeout.is_timeout());
+        assert!(ProbeErrorKind::ConnectTimeout.is_timeout());
+        assert!(ProbeErrorKind::HttpTimeout.is_timeout());
+        assert!(ProbeErrorKind::ReadTimeout.is_timeout());
+        assert!(!ProbeErrorKind::TlsHandshakeFailed.is_timeout());
+        assert!(!ProbeErrorKind::HttpStatusError.is_timeout());
+    }
 }
