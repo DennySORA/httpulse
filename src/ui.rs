@@ -859,17 +859,18 @@ fn draw_metrics_table(
         ProfileViewMode::Compare => target.profiles.iter().collect(),
     };
 
-    let mut header_cells = vec![Span::styled(
+    let mut header_cells: Vec<Line> = vec![Line::from(Span::styled(
         "Metric",
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
-    )];
+    ))];
     for (idx, profile) in profiles.iter().enumerate() {
-        header_cells.push(Span::styled(
-            profile.config.name.clone(),
-            Style::default().fg(color_for_index(idx)),
-        ));
+        let color = color_for_index(idx);
+        header_cells.push(Line::from(vec![
+            Span::styled("■ ", Style::default().fg(color)),
+            Span::styled(profile.config.name.clone(), Style::default().fg(color)),
+        ]));
     }
     let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
@@ -986,20 +987,27 @@ fn draw_chart(
         })
         .collect();
 
-    // Build legend from series names
-    let legend: String = series_specs
+    // Build color-coded legend
+    let legend_spans: Vec<Span> = series_specs
         .iter()
-        .map(|s| s.name.as_str())
-        .collect::<Vec<_>>()
-        .join(" | ");
+        .enumerate()
+        .flat_map(|(i, spec)| {
+            let mut spans = vec![
+                Span::styled("■ ", Style::default().fg(spec.color)),
+                Span::styled(&spec.name, Style::default().fg(spec.color)),
+            ];
+            if i < series_specs.len() - 1 {
+                spans.push(Span::styled("  ", Style::default()));
+            }
+            spans
+        })
+        .collect();
 
     let chart = Chart::new(datasets)
         .block(
             Block::default()
                 .title(format!(" Chart [{}] ", app.window.label()))
-                .title_bottom(
-                    Line::from(format!(" {} ", legend)).style(Style::default().fg(Color::DarkGray)),
-                )
+                .title_bottom(Line::from(legend_spans))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
