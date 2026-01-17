@@ -1247,8 +1247,8 @@ fn draw_target_pane(
     // Draw based on pane mode
     match pane_mode {
         TargetPaneMode::Split => {
-            // Split mode: [Summary | Metrics | Profile | Latency | Connection] on top, Chart below
-            let mut v_constraints = vec![Constraint::Length(10), Constraint::Min(6)];
+            // Split mode: [Summary+Stats | Metrics | Network Info] on top, Chart below
+            let mut v_constraints = vec![Constraint::Length(12), Constraint::Min(6)];
             if has_error {
                 v_constraints.push(Constraint::Length(2));
             }
@@ -1257,23 +1257,19 @@ fn draw_target_pane(
                 .constraints(v_constraints)
                 .split(inner);
 
-            // Top row: Summary | Metrics | Profile | Latency | Connection
+            // Top row: Summary | Metrics | Network Info
             let top_row = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Length(24), // Summary
-                    Constraint::Min(36),    // Metrics
-                    Constraint::Length(18), // Profile
-                    Constraint::Length(18), // Latency
-                    Constraint::Length(20), // Connection
+                    Constraint::Length(26), // Summary (with stats)
+                    Constraint::Min(40),    // Metrics (flex)
+                    Constraint::Length(28), // Network Info (combined)
                 ])
                 .split(v_sections[0]);
 
             draw_summary_pane(frame, top_row[0], app, target);
             draw_metrics_table(frame, top_row[1], app, target);
-            draw_profile_pane(frame, top_row[2], target);
-            draw_latency_pane(frame, top_row[3], app, target);
-            draw_connection_pane(frame, top_row[4], target);
+            draw_network_info_pane(frame, top_row[2], app, target);
 
             // Bottom: Chart
             draw_chart(frame, v_sections[1], app, target);
@@ -1352,53 +1348,8 @@ fn draw_error_bar(
     frame.render_widget(error_para, area);
 }
 
-fn draw_profile_pane(frame: &mut ratatui::Frame, area: Rect, target: &crate::app::TargetRuntime) {
-    let profile = match target.profiles.get(target.selected_profile) {
-        Some(p) => p,
-        None => return,
-    };
-
-    let lines: Vec<Line> = vec![
-        Line::from(vec![
-            Span::styled("Name ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                truncate_string(&profile.config.name, 10),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("HTTP ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:?}", profile.config.http),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("TLS  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:?}", profile.config.tls),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Reuse", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!(" {:?}", profile.config.conn_reuse),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]),
-    ];
-
-    let paragraph = Paragraph::new(lines).block(
-        Block::default()
-            .title(" Profile ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
-    );
-    frame.render_widget(paragraph, area);
-}
-
-fn draw_latency_pane(
+/// Combined network info pane showing Profile, Connection, and TCP stats
+fn draw_network_info_pane(
     frame: &mut ratatui::Frame,
     area: Rect,
     app: &AppState,
@@ -1410,112 +1361,122 @@ fn draw_latency_pane(
     };
 
     let aggregate = app.target_aggregate(target, profile);
-    let total_stats = aggregate.by_metric.get(&MetricKind::Total);
-    let rtt_stats = aggregate.by_metric.get(&MetricKind::Rtt);
-    let jitter_stats = aggregate.by_metric.get(&MetricKind::Jitter);
-
     let mut lines: Vec<Line> = Vec::new();
 
-    if let Some(stats) = total_stats {
-        if let Some(last) = stats.last {
-            lines.push(Line::from(vec![
-                Span::styled("Last ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_latency(last), style_for_latency(last)),
-            ]));
-        }
-        if let Some(min) = stats.min {
-            lines.push(Line::from(vec![
-                Span::styled("Min  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_latency(min)),
-            ]));
-        }
-        if let Some(max) = stats.max {
-            lines.push(Line::from(vec![
-                Span::styled("Max  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_latency(max), style_for_latency(max)),
-            ]));
-        }
-    }
+    // Section: Profile
+    lines.push(Line::styled(
+        "─ Profile ─",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
 
-    if let Some(stats) = rtt_stats {
-        if let Some(mean) = stats.mean {
-            lines.push(Line::from(vec![
-                Span::styled("RTT  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_latency(mean)),
-            ]));
-        }
-    }
+    let http_tls = format!("{:?}/{:?}", profile.config.http, profile.config.tls);
+    lines.push(Line::from(vec![
+        Span::styled(" Proto ", Style::default().fg(Color::DarkGray)),
+        Span::styled(http_tls, Style::default().fg(Color::Yellow)),
+    ]));
 
-    if let Some(stats) = jitter_stats {
-        if let Some(mean) = stats.mean {
-            lines.push(Line::from(vec![
-                Span::styled("Jit  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format_latency(mean)),
-            ]));
-        }
-    }
+    let reuse = format!("{:?}", profile.config.conn_reuse);
+    lines.push(Line::from(vec![
+        Span::styled(" Reuse ", Style::default().fg(Color::DarkGray)),
+        Span::styled(reuse, Style::default().fg(Color::Cyan)),
+    ]));
 
-    // Pad with empty lines if needed
-    while lines.len() < 4 {
-        lines.push(Line::from(""));
-    }
-
-    let paragraph = Paragraph::new(lines).block(
-        Block::default()
-            .title(" Latency ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green)),
-    );
-    frame.render_widget(paragraph, area);
-}
-
-fn draw_connection_pane(
-    frame: &mut ratatui::Frame,
-    area: Rect,
-    target: &crate::app::TargetRuntime,
-) {
-    let profile = match target.profiles.get(target.selected_profile) {
-        Some(p) => p,
-        None => return,
-    };
-
-    let mut lines: Vec<Line> = Vec::new();
+    // Section: Connection
+    lines.push(Line::styled(
+        "─ Connection ─",
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     if let Some(last_sample) = &profile.last_sample {
         if let Some(remote) = &last_sample.remote {
             lines.push(Line::from(vec![
-                Span::styled("IP   ", Style::default().fg(Color::DarkGray)),
-                Span::raw(truncate_string(&remote.ip().to_string(), 12)),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("Port ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("{}", remote.port())),
+                Span::styled(" Addr  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{}:{}", remote.ip(), remote.port())),
             ]));
         }
-        if let Some(alpn) = &last_sample.negotiated.alpn {
-            lines.push(Line::from(vec![
-                Span::styled("ALPN ", Style::default().fg(Color::DarkGray)),
-                Span::raw(alpn.clone()),
-            ]));
-        }
-        if let Some(tls_ver) = &last_sample.negotiated.tls_version {
-            lines.push(Line::from(vec![
-                Span::styled("TLS  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(tls_ver.clone()),
-            ]));
-        }
+        let alpn = last_sample.negotiated.alpn.as_deref().unwrap_or("—");
+        let tls_ver = last_sample.negotiated.tls_version.as_deref().unwrap_or("—");
+        lines.push(Line::from(vec![
+            Span::styled(" ALPN  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(alpn, Style::default().fg(Color::Green)),
+            Span::styled(" TLS ", Style::default().fg(Color::DarkGray)),
+            Span::raw(tls_ver),
+        ]));
+    } else {
+        lines.push(Line::styled(
+            " (no data)",
+            Style::default().fg(Color::DarkGray),
+        ));
     }
 
-    // Pad with empty lines if needed
-    while lines.len() < 4 {
-        lines.push(Line::from(""));
-    }
+    // Section: TCP State (from TCP_INFO)
+    lines.push(Line::styled(
+        "─ TCP State ─",
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    // Get TCP stats
+    let cwnd_stats = aggregate.by_metric.get(&MetricKind::Cwnd);
+    let ssthresh_stats = aggregate.by_metric.get(&MetricKind::Ssthresh);
+    let retrans_stats = aggregate.by_metric.get(&MetricKind::Retrans);
+    let reorder_stats = aggregate.by_metric.get(&MetricKind::Reordering);
+
+    let cwnd_val = cwnd_stats
+        .and_then(|s| s.last)
+        .map(|v| format!("{:.0}", v))
+        .unwrap_or_else(|| "—".to_string());
+    let ssthresh_val = ssthresh_stats
+        .and_then(|s| s.last)
+        .map(|v| format!("{:.0}", v))
+        .unwrap_or_else(|| "—".to_string());
+
+    lines.push(Line::from(vec![
+        Span::styled(" cwnd  ", Style::default().fg(Color::DarkGray)),
+        Span::raw(cwnd_val),
+        Span::styled(" ssth ", Style::default().fg(Color::DarkGray)),
+        Span::raw(ssthresh_val),
+    ]));
+
+    let retrans_val = retrans_stats
+        .and_then(|s| s.last)
+        .map(|v| format!("{:.0}", v))
+        .unwrap_or_else(|| "—".to_string());
+    let reorder_val = reorder_stats
+        .and_then(|s| s.last)
+        .map(|v| format!("{:.0}", v))
+        .unwrap_or_else(|| "—".to_string());
+
+    let retrans_style = retrans_stats
+        .and_then(|s| s.last)
+        .map(|v| {
+            if v == 0.0 {
+                Style::default().fg(Color::Green)
+            } else if v <= 3.0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Red)
+            }
+        })
+        .unwrap_or_default();
+
+    lines.push(Line::from(vec![
+        Span::styled(" retr  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(retrans_val, retrans_style),
+        Span::styled(" reord ", Style::default().fg(Color::DarkGray)),
+        Span::raw(reorder_val),
+    ]));
 
     let paragraph = Paragraph::new(lines).block(
         Block::default()
-            .title(" Connection ")
+            .title(" Network Info ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Magenta)),
+            .border_style(Style::default().fg(Color::Blue)),
     );
     frame.render_widget(paragraph, area);
 }
@@ -1527,21 +1488,24 @@ fn draw_summary_pane(
     target: &crate::app::TargetRuntime,
 ) {
     let summary = app.target_summary(target);
-    let success_rate = if summary.requests > 0 {
-        (summary.successes as f64 / summary.requests as f64) * 100.0
+    let success_rate = if summary.samples > 0 {
+        (summary.successes as f64 / summary.samples as f64) * 100.0
     } else {
         100.0
     };
-    let error_rate = 100.0 - success_rate;
 
-    // Get latency stats from the first profile (or aggregate)
-    let latency_stats = target
+    // Get stats from the selected profile
+    let (latency_stats, goodput_stats) = target
         .profiles
         .get(target.selected_profile)
-        .and_then(|profile| {
+        .map(|profile| {
             let aggregate = app.target_aggregate(target, profile);
-            aggregate.by_metric.get(&MetricKind::Total).cloned()
-        });
+            (
+                aggregate.by_metric.get(&MetricKind::Total).cloned(),
+                aggregate.by_metric.get(&MetricKind::GoodputBps).cloned(),
+            )
+        })
+        .unwrap_or((None, None));
 
     let mut rows = vec![
         Row::new(vec![
@@ -1551,10 +1515,6 @@ fn draw_summary_pane(
         Row::new(vec![
             Cell::from("Success"),
             Cell::from(format!("{:.1}%", success_rate)).style(style_for_success_rate(success_rate)),
-        ]),
-        Row::new(vec![
-            Cell::from("Errors"),
-            Cell::from(format!("{:.1}%", error_rate)).style(style_for_error_rate(error_rate)),
         ]),
         Row::new(vec![
             Cell::from("Timeouts"),
@@ -1579,6 +1539,16 @@ fn draw_summary_pane(
         }
     }
 
+    // Add goodput stats
+    if let Some(stats) = &goodput_stats {
+        if let Some(mean) = stats.mean {
+            rows.push(Row::new(vec![
+                Cell::from("Goodput"),
+                Cell::from(format_goodput(mean)),
+            ]));
+        }
+    }
+
     // Add error breakdown (compact)
     let total_errors: u64 = summary.errors.values().sum();
     if total_errors > 0 {
@@ -1595,7 +1565,7 @@ fn draw_summary_pane(
         ]));
     }
 
-    let widths = [Constraint::Length(12), Constraint::Min(10)];
+    let widths = [Constraint::Length(12), Constraint::Min(12)];
 
     let table = Table::new(rows, widths).column_spacing(1).block(
         Block::default()
@@ -1628,20 +1598,22 @@ fn format_latency(ms: f64) -> String {
     }
 }
 
+fn format_goodput(bps: f64) -> String {
+    if bps >= 1_000_000_000.0 {
+        format!("{:.1} Gbps", bps / 1_000_000_000.0)
+    } else if bps >= 1_000_000.0 {
+        format!("{:.1} Mbps", bps / 1_000_000.0)
+    } else if bps >= 1000.0 {
+        format!("{:.1} Kbps", bps / 1000.0)
+    } else {
+        format!("{:.0} bps", bps)
+    }
+}
+
 fn style_for_success_rate(rate: f64) -> Style {
     if rate >= 99.0 {
         Style::default().fg(Color::Green)
     } else if rate >= 95.0 {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Red)
-    }
-}
-
-fn style_for_error_rate(rate: f64) -> Style {
-    if rate <= 1.0 {
-        Style::default().fg(Color::Green)
-    } else if rate <= 5.0 {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::Red)
@@ -1668,23 +1640,94 @@ fn style_for_timeout_count(count: u64) -> Style {
     }
 }
 
+/// Metric display configuration with category grouping
+struct MetricDisplay {
+    metric: MetricKind,
+    category: &'static str,
+}
+
+const METRIC_GROUPS: &[MetricDisplay] = &[
+    // Latency Breakdown
+    MetricDisplay {
+        metric: MetricKind::Dns,
+        category: "Latency",
+    },
+    MetricDisplay {
+        metric: MetricKind::Connect,
+        category: "Latency",
+    },
+    MetricDisplay {
+        metric: MetricKind::Tls,
+        category: "Latency",
+    },
+    MetricDisplay {
+        metric: MetricKind::Ttfb,
+        category: "Latency",
+    },
+    MetricDisplay {
+        metric: MetricKind::Download,
+        category: "Latency",
+    },
+    MetricDisplay {
+        metric: MetricKind::Total,
+        category: "Latency",
+    },
+    // Quality Metrics
+    MetricDisplay {
+        metric: MetricKind::Rtt,
+        category: "Quality",
+    },
+    MetricDisplay {
+        metric: MetricKind::RttVar,
+        category: "Quality",
+    },
+    MetricDisplay {
+        metric: MetricKind::Jitter,
+        category: "Quality",
+    },
+    // Reliability Metrics
+    MetricDisplay {
+        metric: MetricKind::Retrans,
+        category: "Reliability",
+    },
+    MetricDisplay {
+        metric: MetricKind::Reordering,
+        category: "Reliability",
+    },
+    MetricDisplay {
+        metric: MetricKind::TransportLoss,
+        category: "Reliability",
+    },
+    MetricDisplay {
+        metric: MetricKind::ProbeLossRate,
+        category: "Reliability",
+    },
+    // Throughput Metrics
+    MetricDisplay {
+        metric: MetricKind::GoodputBps,
+        category: "Throughput",
+    },
+    MetricDisplay {
+        metric: MetricKind::BandwidthUtilization,
+        category: "Throughput",
+    },
+    // TCP State Metrics
+    MetricDisplay {
+        metric: MetricKind::Cwnd,
+        category: "TCP",
+    },
+    MetricDisplay {
+        metric: MetricKind::Ssthresh,
+        category: "TCP",
+    },
+];
+
 fn draw_metrics_table(
     frame: &mut ratatui::Frame,
     area: Rect,
     app: &AppState,
     target: &crate::app::TargetRuntime,
 ) {
-    let metrics = [
-        MetricKind::Dns,
-        MetricKind::Connect,
-        MetricKind::Tls,
-        MetricKind::Ttfb,
-        MetricKind::Download,
-        MetricKind::Total,
-        MetricKind::Rtt,
-        MetricKind::Retrans,
-    ];
-
     let profiles: Vec<_> = match target.view_mode {
         ProfileViewMode::Single => target
             .profiles
@@ -1709,8 +1752,33 @@ fn draw_metrics_table(
     }
     let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
-    let rows = metrics.iter().map(|metric| {
-        let is_selected = app.selected_metrics.contains(metric);
+    let mut rows: Vec<Row> = Vec::new();
+    let mut last_category = "";
+
+    for metric_display in METRIC_GROUPS {
+        // Add category separator row
+        if metric_display.category != last_category {
+            if !last_category.is_empty() {
+                // Add empty separator row between categories
+                let empty_cells: Vec<Cell> =
+                    std::iter::repeat_n(Cell::from(""), profiles.len() + 1).collect();
+                rows.push(Row::new(empty_cells).height(1));
+            }
+            // Add category header
+            let category_style = Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC);
+            let mut cat_cells: Vec<Cell> = vec![Cell::from(Span::styled(
+                format!("─ {} ─", metric_display.category),
+                category_style,
+            ))];
+            cat_cells.extend(std::iter::repeat_n(Cell::from(""), profiles.len()));
+            rows.push(Row::new(cat_cells));
+            last_category = metric_display.category;
+        }
+
+        let metric = metric_display.metric;
+        let is_selected = app.selected_metrics.contains(&metric);
         let metric_style = if is_selected {
             Style::default()
                 .fg(Color::Yellow)
@@ -1721,22 +1789,22 @@ fn draw_metrics_table(
 
         let unit = metric.unit();
         let label_with_unit = if unit.is_empty() {
-            metric.label().to_string()
+            format!("  {}", metric.label())
         } else {
-            format!("{} ({})", metric.label(), unit)
+            format!("  {} ({})", metric.label(), unit)
         };
 
-        let mut cells = Vec::new();
-        cells.push(Span::styled(label_with_unit, metric_style));
+        let mut cells: Vec<Cell> = Vec::new();
+        cells.push(Cell::from(Span::styled(label_with_unit, metric_style)));
         for profile in &profiles {
             let aggregate = app.target_aggregate(target, profile);
-            let stats = aggregate.by_metric.get(metric);
-            cells.push(Span::raw(format_stat_triplet(*metric, stats)));
+            let stats = aggregate.by_metric.get(&metric);
+            cells.push(Cell::from(format_stat_triplet(metric, stats)));
         }
-        Row::new(cells)
-    });
+        rows.push(Row::new(cells));
+    }
 
-    let widths: Vec<Constraint> = std::iter::once(Constraint::Length(14))
+    let widths: Vec<Constraint> = std::iter::once(Constraint::Length(18))
         .chain(profiles.iter().map(|_| Constraint::Length(18)))
         .collect();
 
