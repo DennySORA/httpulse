@@ -3,10 +3,10 @@ use crate::probe::{
     EbpfConnStatsDelta, NegotiatedProtocol, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample,
     TcpInfoSnapshot,
 };
+use curl::Error as CurlError;
 use curl::easy::{
     Easy2, Handler, HttpVersion as CurlHttpVersion, IpResolve, List, SslVersion, WriteError,
 };
-use curl::Error as CurlError;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
 
@@ -172,22 +172,21 @@ impl ProbeClient {
             let _ = self.easy.http_headers(list);
         }
 
-        if !target.dns_enabled {
-            if let Some(ip) = resolved_ip {
-                if let Some(host) = target.url.host_str() {
-                    let port = target.url.port_or_known_default().unwrap_or_else(|| {
-                        if target.url.scheme() == "https" {
-                            443
-                        } else {
-                            80
-                        }
-                    });
-                    let mut list = List::new();
-                    let entry = format!("{host}:{port}:{ip}");
-                    let _ = list.append(&entry);
-                    let _ = self.easy.resolve(list);
+        if !target.dns_enabled
+            && let Some(ip) = resolved_ip
+            && let Some(host) = target.url.host_str()
+        {
+            let port = target.url.port_or_known_default().unwrap_or_else(|| {
+                if target.url.scheme() == "https" {
+                    443
+                } else {
+                    80
                 }
-            }
+            });
+            let mut list = List::new();
+            let entry = format!("{host}:{port}:{ip}");
+            let _ = list.append(&entry);
+            let _ = self.easy.resolve(list);
         }
 
         let mut probe_result = ProbeResult::Ok;
@@ -195,20 +194,20 @@ impl ProbeClient {
         let was_aborted_by_limit = self.easy.get_ref().limit_reached;
         let mut dns_timeout = false;
 
-        if let Err(err) = &perform_result {
-            if err.is_operation_timedout() {
-                dns_timeout = is_dns_timeout_message(&err.to_string());
-            }
+        if let Err(err) = &perform_result
+            && err.is_operation_timedout()
+        {
+            dns_timeout = is_dns_timeout_message(&err.to_string());
         }
 
         let http_status = self.easy.response_code().ok().map(|code| code as u16);
-        if let Some(status) = http_status {
-            if status >= 400 {
-                probe_result = ProbeResult::Err(ProbeError {
-                    kind: ProbeErrorKind::HttpStatusError,
-                    message: format!("HTTP status {status}"),
-                });
-            }
+        if let Some(status) = http_status
+            && status >= 400
+        {
+            probe_result = ProbeResult::Err(ProbeError {
+                kind: ProbeErrorKind::HttpStatusError,
+                message: format!("HTTP status {status}"),
+            });
         }
 
         let mut aborted_by_limit = false;

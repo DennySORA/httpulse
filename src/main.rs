@@ -1,5 +1,5 @@
 use clap::Parser;
-use httpulse::app::{parse_target_url, AppState};
+use httpulse::app::{AppState, parse_target_url};
 use httpulse::config::{EbpfMode, GlobalConfig};
 use httpulse::ui::run_ui;
 

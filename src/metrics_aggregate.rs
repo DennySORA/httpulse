@@ -68,14 +68,14 @@ impl MetricsStore {
             }
         }
 
-        if let Some(total_values) = metric_values.get(&MetricKind::Total) {
-            if total_values.len() > 1 {
-                let jitter_values: Vec<f64> = total_values
-                    .windows(2)
-                    .map(|w| (w[1] - w[0]).abs())
-                    .collect();
-                metric_values.insert(MetricKind::Jitter, jitter_values);
-            }
+        if let Some(total_values) = metric_values.get(&MetricKind::Total)
+            && total_values.len() > 1
+        {
+            let jitter_values: Vec<f64> = total_values
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .collect();
+            metric_values.insert(MetricKind::Jitter, jitter_values);
         }
 
         let mut by_metric = HashMap::new();
@@ -119,13 +119,12 @@ impl MetricsStore {
 
         if let Some(samples) = self.samples.get(&key) {
             for sample in samples.iter().filter(|s| s.ts >= cutoff) {
-                if let ProbeResult::Ok = sample.result {
-                    if let Some(value) = sample_metric(sample, metric, link_capacity_mbps) {
-                        if let Ok(age) = SystemTime::now().duration_since(sample.ts) {
-                            let x = (window_seconds - age.as_secs_f64()).max(0.0);
-                            points.push((x, value));
-                        }
-                    }
+                if let ProbeResult::Ok = sample.result
+                    && let Some(value) = sample_metric(sample, metric, link_capacity_mbps)
+                    && let Ok(age) = SystemTime::now().duration_since(sample.ts)
+                {
+                    let x = (window_seconds - age.as_secs_f64()).max(0.0);
+                    points.push((x, value));
                 }
             }
         }
@@ -142,13 +141,12 @@ impl MetricsStore {
 
         if let Some(samples) = self.samples.get(&key) {
             for sample in samples.iter().filter(|s| s.ts >= cutoff) {
-                if let ProbeResult::Err(err) = &sample.result {
-                    if is_timeout_error(&err.kind) {
-                        if let Ok(age) = SystemTime::now().duration_since(sample.ts) {
-                            let x = (window_seconds - age.as_secs_f64()).max(0.0);
-                            points.push(x);
-                        }
-                    }
+                if let ProbeResult::Err(err) = &sample.result
+                    && is_timeout_error(&err.kind)
+                    && let Ok(age) = SystemTime::now().duration_since(sample.ts)
+                {
+                    let x = (window_seconds - age.as_secs_f64()).max(0.0);
+                    points.push(x);
                 }
             }
         }

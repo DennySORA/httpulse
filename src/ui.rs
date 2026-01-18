@@ -1,15 +1,16 @@
 use crate::app::{
-    apply_edit_command, parse_profile_specs, parse_target_url, AppState, MetricsCategory,
-    ProfileViewMode, TargetPaneMode,
+    AppState, MetricsCategory, ProfileViewMode, TargetPaneMode, apply_edit_command,
+    parse_profile_specs, parse_target_url,
 };
 use crate::metrics::MetricKind;
 use crate::metrics_aggregate::ProfileKey;
 use crate::probe::ProbeSample;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::{execute, QueueableCommand};
+use crossterm::{QueueableCommand, execute};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -19,7 +20,6 @@ use ratatui::widgets::{
     Block, Borders, Cell, Chart, Clear, Dataset, GraphType, List, ListItem, Padding, Paragraph,
     Row, Table, TableState, Wrap,
 };
-use ratatui::Terminal;
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 use url::Url;
@@ -200,58 +200,58 @@ pub fn run_ui(
 
         let tick_rate = Duration::from_secs_f64(1.0 / app.global.ui_refresh_hz as f64);
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                match input_mode {
-                    InputMode::Normal => {
-                        if handle_normal_key(
-                            key,
-                            &mut app,
-                            &mut input_mode,
-                            &mut input_buffer,
-                            &mut settings_state,
-                            &mut glossary_page,
-                        ) {
-                            should_quit = true;
-                        }
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+        {
+            match input_mode {
+                InputMode::Normal => {
+                    if handle_normal_key(
+                        key,
+                        &mut app,
+                        &mut input_mode,
+                        &mut input_buffer,
+                        &mut settings_state,
+                        &mut glossary_page,
+                    ) {
+                        should_quit = true;
                     }
-                    InputMode::Help => {
-                        handle_help_key(key, &mut input_mode);
-                    }
-                    InputMode::Glossary => {
-                        handle_glossary_key(key, &mut input_mode, &mut glossary_page);
-                    }
-                    InputMode::Settings => {
-                        handle_settings_key(
-                            key,
-                            &mut app,
-                            &mut input_mode,
-                            &mut input_buffer,
-                            &mut settings_state,
-                        );
-                    }
-                    InputMode::SettingsEdit(field) => {
-                        handle_settings_edit_key(
-                            key,
-                            &mut app,
-                            &mut input_mode,
-                            &mut input_buffer,
-                            field,
-                            &mut settings_state,
-                        );
-                    }
-                    InputMode::ConfirmDelete => {
-                        handle_confirm_delete_key(key, &mut app, &mut input_mode);
-                    }
-                    _ => {
-                        handle_input_key(
-                            key,
-                            &mut app,
-                            &mut input_mode,
-                            &mut input_buffer,
-                            &sample_tx,
-                        );
-                    }
+                }
+                InputMode::Help => {
+                    handle_help_key(key, &mut input_mode);
+                }
+                InputMode::Glossary => {
+                    handle_glossary_key(key, &mut input_mode, &mut glossary_page);
+                }
+                InputMode::Settings => {
+                    handle_settings_key(
+                        key,
+                        &mut app,
+                        &mut input_mode,
+                        &mut input_buffer,
+                        &mut settings_state,
+                    );
+                }
+                InputMode::SettingsEdit(field) => {
+                    handle_settings_edit_key(
+                        key,
+                        &mut app,
+                        &mut input_mode,
+                        &mut input_buffer,
+                        field,
+                        &mut settings_state,
+                    );
+                }
+                InputMode::ConfirmDelete => {
+                    handle_confirm_delete_key(key, &mut app, &mut input_mode);
+                }
+                _ => {
+                    handle_input_key(
+                        key,
+                        &mut app,
+                        &mut input_mode,
+                        &mut input_buffer,
+                        &sample_tx,
+                    );
                 }
             }
         }
@@ -1128,10 +1128,10 @@ fn handle_normal_key(
             app.selected_target = app.selected_target.saturating_sub(1);
         }
         KeyCode::Tab => {
-            if let Some(target) = app.selected_target_mut() {
-                if !target.profiles.is_empty() {
-                    target.selected_profile = (target.selected_profile + 1) % target.profiles.len();
-                }
+            if let Some(target) = app.selected_target_mut()
+                && !target.profiles.is_empty()
+            {
+                target.selected_profile = (target.selected_profile + 1) % target.profiles.len();
             }
         }
         KeyCode::Char('1') => app.toggle_metric(MetricKind::Total),
@@ -1925,13 +1925,13 @@ fn draw_summary_pane(
     }
 
     // Add goodput stats
-    if let Some(stats) = &goodput_stats {
-        if let Some(mean) = stats.mean {
-            rows.push(Row::new(vec![
-                Cell::from("Goodput"),
-                Cell::from(format_goodput(mean)),
-            ]));
-        }
+    if let Some(stats) = &goodput_stats
+        && let Some(mean) = stats.mean
+    {
+        rows.push(Row::new(vec![
+            Cell::from("Goodput"),
+            Cell::from(format_goodput(mean)),
+        ]));
     }
 
     // Add error breakdown (compact)

@@ -1,8 +1,8 @@
-use crate::config::{default_profiles, GlobalConfig, ProfileConfig, TargetConfig};
+use crate::config::{GlobalConfig, ProfileConfig, TargetConfig, default_profiles};
 use crate::metrics::{MetricKind, WindowedAggregate};
 use crate::metrics_aggregate::{MetricsStore, ProfileKey};
 use crate::probe::{ProbeErrorKind, ProbeSample};
-use crate::runtime::{spawn_profile_worker, ControlMessage, WorkerHandle};
+use crate::runtime::{ControlMessage, WorkerHandle, spawn_profile_worker};
 use std::collections::{BTreeMap, HashSet};
 use std::net::IpAddr;
 use url::Url;
@@ -252,14 +252,14 @@ impl AppState {
         profile_index: usize,
         updated: ProfileConfig,
     ) {
-        if let Some(target) = self.targets.get_mut(target_index) {
-            if let Some(profile) = target.profiles.get_mut(profile_index) {
-                profile.config = updated.clone();
-                let _ = profile
-                    .worker
-                    .sender
-                    .send(ControlMessage::UpdateProfile(Box::new(updated)));
-            }
+        if let Some(target) = self.targets.get_mut(target_index)
+            && let Some(profile) = target.profiles.get_mut(profile_index)
+        {
+            profile.config = updated.clone();
+            let _ = profile
+                .worker
+                .sender
+                .send(ControlMessage::UpdateProfile(Box::new(updated)));
         }
     }
 
@@ -429,11 +429,7 @@ pub fn apply_edit_command(target: &TargetRuntime, input: &str) -> Option<TargetC
         }
     }
 
-    if modified {
-        Some(updated)
-    } else {
-        None
-    }
+    if modified { Some(updated) } else { None }
 }
 
 fn parse_duration(input: &str) -> Option<std::time::Duration> {
