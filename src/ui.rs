@@ -45,6 +45,7 @@ enum InputMode {
     Normal,
     AddTarget,
     Help,
+    Glossary,
     Settings,
     SettingsEdit(SettingsField),
     ConfirmDelete,
@@ -118,6 +119,7 @@ pub fn run_ui(
     let mut input_mode = InputMode::Normal;
     let mut input_buffer = String::new();
     let mut settings_state = SettingsState::new();
+    let mut glossary_page: usize = 0;
     let mut should_quit = false;
     let mut last_tick = Instant::now();
 
@@ -180,6 +182,7 @@ pub fn run_ui(
             // Overlay popups
             match input_mode {
                 InputMode::Help => draw_help_popup(frame, size),
+                InputMode::Glossary => draw_glossary_popup(frame, size, glossary_page),
                 InputMode::Settings | InputMode::SettingsEdit(_) => {
                     draw_settings_popup(
                         frame,
@@ -207,12 +210,16 @@ pub fn run_ui(
                             &mut input_mode,
                             &mut input_buffer,
                             &mut settings_state,
+                            &mut glossary_page,
                         ) {
                             should_quit = true;
                         }
                     }
                     InputMode::Help => {
                         handle_help_key(key, &mut input_mode);
+                    }
+                    InputMode::Glossary => {
+                        handle_glossary_key(key, &mut input_mode, &mut glossary_page);
                     }
                     InputMode::Settings => {
                         handle_settings_key(
@@ -313,19 +320,22 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
         InputMode::Normal => vec![
             ("q", "Quit"),
             ("?", "Help"),
+            ("G", "Glossary"),
             ("S", "Settings"),
             ("a", "Add"),
             ("d", "Del"),
-            ("e", "Edit"),
             ("p", "Pause"),
             ("c", "Compare"),
             ("g", "Pane"),
             ("w", "Window"),
-            ("Up/Down", "Select"),
-            ("Tab", "Profile"),
             ("[/]", "Category"),
         ],
         InputMode::Help => vec![("Esc", "Close"), ("q", "Close")],
+        InputMode::Glossary => vec![
+            ("Esc", "Close"),
+            ("Left/Right", "Page"),
+            ("1-3", "Jump to page"),
+        ],
         InputMode::Settings => vec![
             ("Esc", "Close"),
             ("Up/Down", "Select"),
@@ -477,6 +487,263 @@ fn draw_help_popup(frame: &mut ratatui::Frame, area: Rect) {
         .wrap(Wrap { trim: false });
 
     frame.render_widget(help, popup_area);
+}
+
+fn draw_glossary_popup(frame: &mut ratatui::Frame, area: Rect, page: usize) {
+    let popup_area = centered_rect(75, 85, area);
+    frame.render_widget(Clear, popup_area);
+
+    let page_titles = [
+        "Latency Metrics",
+        "Quality & Reliability",
+        "Throughput & TCP",
+    ];
+    let page_title = page_titles.get(page).unwrap_or(&"Glossary");
+
+    let glossary_text = match page {
+        0 => vec![
+            Line::styled(
+                "─── Latency Metrics ───",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  DNS        ", Style::default().fg(Color::Cyan)),
+                Span::raw("Time to resolve domain name to IP address."),
+            ]),
+            Line::styled(
+                "               Includes recursive resolver lookup time.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Connect    ", Style::default().fg(Color::Cyan)),
+                Span::raw("TCP three-way handshake duration (SYN→SYN-ACK→ACK)."),
+            ]),
+            Line::styled(
+                "               Reflects network latency to server.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  TLS        ", Style::default().fg(Color::Cyan)),
+                Span::raw("TLS/SSL handshake time after TCP connection."),
+            ]),
+            Line::styled(
+                "               Includes certificate verification and key exchange.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  TTFB       ", Style::default().fg(Color::Cyan)),
+                Span::raw("Time To First Byte - server processing time."),
+            ]),
+            Line::styled(
+                "               From request sent to first response byte received.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Download   ", Style::default().fg(Color::Cyan)),
+                Span::raw("Time to download response body."),
+            ]),
+            Line::styled(
+                "               Affected by bandwidth, content size, and server speed.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Total      ", Style::default().fg(Color::Cyan)),
+                Span::raw("Complete request lifecycle time."),
+            ]),
+            Line::styled(
+                "               Total = DNS + Connect + TLS + TTFB + Download",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ],
+        1 => vec![
+            Line::styled(
+                "─── Quality Metrics ───",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  RTT        ", Style::default().fg(Color::Cyan)),
+                Span::raw("Round-Trip Time from TCP_INFO socket option."),
+            ]),
+            Line::styled(
+                "               Kernel-measured RTT, more accurate than app-level.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  RTTVar     ", Style::default().fg(Color::Cyan)),
+                Span::raw("RTT variance (smoothed) from TCP_INFO."),
+            ]),
+            Line::styled(
+                "               High variance indicates unstable network path.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Jitter     ", Style::default().fg(Color::Cyan)),
+                Span::raw("Inter-probe latency variation."),
+            ]),
+            Line::styled(
+                "               |Latency[n] - Latency[n-1]| between consecutive probes.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::styled(
+                "─── Reliability Metrics ───",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Retrans    ", Style::default().fg(Color::Cyan)),
+                Span::raw("TCP retransmission count from TCP_INFO."),
+            ]),
+            Line::styled(
+                "               Non-zero indicates packet loss or network issues.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Reordering ", Style::default().fg(Color::Cyan)),
+                Span::raw("TCP packet reordering events."),
+            ]),
+            Line::styled(
+                "               Out-of-order packets suggest path changes or issues.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  TransLoss  ", Style::default().fg(Color::Cyan)),
+                Span::raw("Transport-layer loss (lost segments / total)."),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  ProbeLoss  ", Style::default().fg(Color::Cyan)),
+                Span::raw("Application-layer probe failure rate."),
+            ]),
+            Line::styled(
+                "               HTTP errors, timeouts, connection failures.",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ],
+        2 => vec![
+            Line::styled(
+                "─── Throughput Metrics ───",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Goodput    ", Style::default().fg(Color::Cyan)),
+                Span::raw("Application-layer throughput in bits/second."),
+            ]),
+            Line::styled(
+                "               Actual useful data rate (excludes protocol overhead).",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  BW Util    ", Style::default().fg(Color::Cyan)),
+                Span::raw("Bandwidth utilization percentage."),
+            ]),
+            Line::styled(
+                "               Goodput / Link Capacity. Set capacity in Settings (S).",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::styled(
+                "─── TCP State Metrics ───",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  cwnd       ", Style::default().fg(Color::Cyan)),
+                Span::raw("Congestion Window size (segments)."),
+            ]),
+            Line::styled(
+                "               How much data TCP can send before waiting for ACK.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  ssthresh   ", Style::default().fg(Color::Cyan)),
+                Span::raw("Slow-Start Threshold (segments)."),
+            ]),
+            Line::styled(
+                "               cwnd grows exponentially until ssthresh, then linearly.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::styled(
+                "─── Statistics ───",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  P50/P99    ", Style::default().fg(Color::Cyan)),
+                Span::raw("50th/99th percentile values."),
+            ]),
+            Line::styled(
+                "               P50=median, P99=worst 1% of samples.",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Mean       ", Style::default().fg(Color::Cyan)),
+                Span::raw("Arithmetic average of sampled values."),
+            ]),
+        ],
+        _ => vec![Line::from("Page not found")],
+    };
+
+    // Build page indicator
+    let page_indicator: Vec<Span> = (0..GLOSSARY_PAGE_COUNT)
+        .flat_map(|i| {
+            let style = if i == page {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let mut spans = vec![Span::styled(format!(" {} ", i + 1), style)];
+            if i < GLOSSARY_PAGE_COUNT - 1 {
+                spans.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
+            }
+            spans
+        })
+        .collect();
+
+    let glossary = Paragraph::new(glossary_text)
+        .block(
+            Block::default()
+                .title(format!(" Glossary - {} ", page_title))
+                .title_alignment(Alignment::Center)
+                .title_bottom(Line::from(page_indicator).alignment(Alignment::Center))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .padding(Padding::horizontal(1)),
+        )
+        .style(Style::default().bg(Color::Black))
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(glossary, popup_area);
 }
 
 fn draw_settings_popup(
@@ -806,6 +1073,7 @@ fn handle_normal_key(
     input_mode: &mut InputMode,
     input_buffer: &mut String,
     settings_state: &mut SettingsState,
+    glossary_page: &mut usize,
 ) -> bool {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return true;
@@ -814,6 +1082,10 @@ fn handle_normal_key(
         KeyCode::Char('q') => return true,
         KeyCode::Char('?') => {
             *input_mode = InputMode::Help;
+        }
+        KeyCode::Char('G') => {
+            *input_mode = InputMode::Glossary;
+            *glossary_page = 0;
         }
         KeyCode::Char('S') => {
             *input_mode = InputMode::Settings;
@@ -891,6 +1163,28 @@ fn handle_help_key(key: KeyEvent, input_mode: &mut InputMode) {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
             *input_mode = InputMode::Normal;
         }
+        _ => {}
+    }
+}
+
+const GLOSSARY_PAGE_COUNT: usize = 3;
+
+fn handle_glossary_key(key: KeyEvent, input_mode: &mut InputMode, glossary_page: &mut usize) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('G') => {
+            *input_mode = InputMode::Normal;
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            *glossary_page = glossary_page.saturating_sub(1);
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if *glossary_page + 1 < GLOSSARY_PAGE_COUNT {
+                *glossary_page += 1;
+            }
+        }
+        KeyCode::Char('1') => *glossary_page = 0,
+        KeyCode::Char('2') => *glossary_page = 1,
+        KeyCode::Char('3') => *glossary_page = 2,
         _ => {}
     }
 }
@@ -1069,6 +1363,7 @@ fn handle_input_key(
                 }
                 InputMode::Normal
                 | InputMode::Help
+                | InputMode::Glossary
                 | InputMode::Settings
                 | InputMode::SettingsEdit(_)
                 | InputMode::ConfirmDelete => {}
