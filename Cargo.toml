@@ -15,5 +15,7 @@ crossterm = "0.28"
 hdrhistogram = "7"
 libc = "0.2"
 ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
 url = "2"
 uuid = { version = "1.18.1", features = ["v4"] }

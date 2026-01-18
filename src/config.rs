@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
 use url::Url;
@@ -219,11 +220,22 @@ impl fmt::Display for ProbeMethod {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum EbpfMode {
     Off,
     Minimal,
     Full,
+}
+
+impl EbpfMode {
+    pub fn parse_cli(value: &str) -> Self {
+        match value {
+            "minimal" => EbpfMode::Minimal,
+            "full" => EbpfMode::Full,
+            _ => EbpfMode::Off,
+        }
+    }
 }
 
 impl fmt::Display for EbpfMode {
