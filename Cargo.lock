@@ -407,6 +407,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "httpulse"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crossbeam-channel",
+ "crossterm",
+ "curl",
+ "curl-sys",
+ "hdrhistogram",
+ "libc",
+ "ratatui",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -663,22 +679,6 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "monitor_network"
-version = "0.1.0"
-dependencies = [
- "clap",
- "crossbeam-channel",
- "crossterm",
- "curl",
- "curl-sys",
- "hdrhistogram",
- "libc",
- "ratatui",
- "url",
- "uuid",
 ]
 
 [[package]]
