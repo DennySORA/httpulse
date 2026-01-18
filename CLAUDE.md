@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**monitor_network** is a real-time HTTP latency and quality monitoring tool in Rust. It probes multiple target URLs using configurable HTTP profiles, collects timing/network metrics via libcurl, and displays results in an interactive TUI (Ratatui).
+**httpulse** is a real-time HTTP latency and network quality monitoring tool in Rust. It probes multiple target URLs using configurable HTTP profiles, collects timing/network metrics via libcurl, and displays results in an interactive TUI (Ratatui).
 
 ## Build & Development Commands
 

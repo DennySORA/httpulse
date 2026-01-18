@@ -1,11 +1,11 @@
 use clap::Parser;
-use monitor_network::app::{parse_target_url, AppState};
-use monitor_network::config::{EbpfMode, GlobalConfig};
-use monitor_network::ui::run_ui;
+use httpulse::app::{parse_target_url, AppState};
+use httpulse::config::{EbpfMode, GlobalConfig};
+use httpulse::ui::run_ui;
 
 #[derive(Parser, Debug)]
-#[command(name = "monitor_network")]
-#[command(about = "HTTP latency and quality monitor", long_about = None)]
+#[command(name = "httpulse")]
+#[command(about = "Real-time HTTP latency and network quality monitor", long_about = None)]
 struct Args {
     /// Target URL to probe (repeatable)
     #[arg(short, long, value_name = "URL")]

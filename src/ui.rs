@@ -283,7 +283,7 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &AppState) {
 
     let header = Line::from(vec![
         Span::styled(
-            " Monitor Network ",
+            " httpulse",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -1706,7 +1706,7 @@ fn draw_terminal_too_small(frame: &mut ratatui::Frame, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Red))
-            .title(" Monitor Network "),
+            .title(" httpulse"),
     );
 
     frame.render_widget(paragraph, area);

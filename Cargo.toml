@@ -1,7 +1,10 @@
 [package]
-name = "monitor_network"
+name = "httpulse"
 version = "0.1.0"
 edition = "2021"
+description = "Real-time HTTP latency and network quality monitoring with interactive TUI"
+keywords = ["http", "latency", "monitoring", "tui", "network"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
