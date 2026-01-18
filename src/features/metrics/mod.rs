@@ -44,6 +44,67 @@ impl MetricKind {
             _ => "",
         }
     }
+
+    pub fn iter_all() -> &'static [MetricKind] {
+        &[
+            MetricKind::Dns,
+            MetricKind::Connect,
+            MetricKind::Tls,
+            MetricKind::Ttfb,
+            MetricKind::Download,
+            MetricKind::Total,
+            MetricKind::Rtt,
+            MetricKind::RttVar,
+            MetricKind::Jitter,
+            MetricKind::Retrans,
+            MetricKind::Reordering,
+            MetricKind::DupAcks,
+            MetricKind::ProbeLossRate,
+            MetricKind::TransportLoss,
+            MetricKind::GoodputBps,
+            MetricKind::BandwidthUtilization,
+            MetricKind::Cwnd,
+            MetricKind::Ssthresh,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MetricKind::Dns => "dns",
+            MetricKind::Connect => "connect",
+            MetricKind::Tls => "tls",
+            MetricKind::Ttfb => "ttfb",
+            MetricKind::Download => "download",
+            MetricKind::Total => "total",
+            MetricKind::Rtt => "rtt",
+            MetricKind::RttVar => "rttvar",
+            MetricKind::Jitter => "jitter",
+            MetricKind::Retrans => "retrans",
+            MetricKind::Reordering => "reorder",
+            MetricKind::DupAcks => "dupack",
+            MetricKind::ProbeLossRate => "probe_loss",
+            MetricKind::TransportLoss => "transport_loss",
+            MetricKind::GoodputBps => "goodput_bps",
+            MetricKind::BandwidthUtilization => "utilization",
+            MetricKind::Cwnd => "cwnd",
+            MetricKind::Ssthresh => "ssthresh",
+        }
+    }
+
+    pub fn is_latency_metric(self) -> bool {
+        matches!(
+            self,
+            MetricKind::Dns
+                | MetricKind::Connect
+                | MetricKind::Tls
+                | MetricKind::Ttfb
+                | MetricKind::Download
+                | MetricKind::Total
+                | MetricKind::Rtt
+                | MetricKind::RttVar
+                | MetricKind::Jitter
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +118,36 @@ pub struct MetricStats {
     pub p50: Option<f64>,
     pub p90: Option<f64>,
     pub p99: Option<f64>,
+}
+
+impl MetricStats {
+    pub fn empty() -> Self {
+        Self {
+            n: 0,
+            last: None,
+            min: None,
+            max: None,
+            mean: None,
+            stddev: None,
+            p50: None,
+            p90: None,
+            p99: None,
+        }
+    }
+
+    pub fn from_scalar(value: Option<f64>, n: u64) -> Self {
+        Self {
+            n,
+            last: value,
+            min: value,
+            max: value,
+            mean: value,
+            stddev: value.map(|_| 0.0),
+            p50: value,
+            p90: value,
+            p99: value,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
