@@ -1,3 +1,4 @@
+mod common;
 mod features;
 
 pub mod app;

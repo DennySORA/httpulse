@@ -1,4 +1,5 @@
 use super::{MetricKind, MetricStats, WindowedAggregate};
+use crate::common::time::{Clock, SystemClock};
 use crate::config::{ProfileId, SamplingConfig, TargetId, WindowSpec};
 use crate::probe::{ProbeErrorKind, ProbeResult, ProbeSample};
 use hdrhistogram::Histogram;
@@ -38,7 +39,19 @@ impl MetricsStore {
         sampling: &SamplingConfig,
         link_capacity_mbps: Option<f64>,
     ) -> WindowedAggregate {
-        let cutoff = SystemTime::now()
+        self.windowed_aggregate_with_clock(key, window, sampling, link_capacity_mbps, &SystemClock)
+    }
+
+    pub fn windowed_aggregate_with_clock(
+        &self,
+        key: ProfileKey,
+        window: WindowSpec,
+        sampling: &SamplingConfig,
+        link_capacity_mbps: Option<f64>,
+        clock: &dyn Clock,
+    ) -> WindowedAggregate {
+        let now = clock.now();
+        let cutoff = now
             .checked_sub(window.duration())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let mut error_breakdown = HashMap::new();
@@ -111,8 +124,20 @@ impl MetricsStore {
         metric: MetricKind,
         link_capacity_mbps: Option<f64>,
     ) -> Vec<(f64, f64)> {
+        self.timeseries_with_clock(key, window, metric, link_capacity_mbps, &SystemClock)
+    }
+
+    pub fn timeseries_with_clock(
+        &self,
+        key: ProfileKey,
+        window: WindowSpec,
+        metric: MetricKind,
+        link_capacity_mbps: Option<f64>,
+        clock: &dyn Clock,
+    ) -> Vec<(f64, f64)> {
+        let now = clock.now();
         let window_seconds = window.duration().as_secs_f64();
-        let cutoff = SystemTime::now()
+        let cutoff = now
             .checked_sub(window.duration())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let mut points = Vec::new();
@@ -121,7 +146,7 @@ impl MetricsStore {
             for sample in samples.iter().filter(|s| s.ts >= cutoff) {
                 if let ProbeResult::Ok = sample.result
                     && let Some(value) = sample_metric(sample, metric, link_capacity_mbps)
-                    && let Ok(age) = SystemTime::now().duration_since(sample.ts)
+                    && let Ok(age) = now.duration_since(sample.ts)
                 {
                     let x = (window_seconds - age.as_secs_f64()).max(0.0);
                     points.push((x, value));
@@ -133,8 +158,18 @@ impl MetricsStore {
     }
 
     pub fn timeout_events(&self, key: ProfileKey, window: WindowSpec) -> Vec<f64> {
+        self.timeout_events_with_clock(key, window, &SystemClock)
+    }
+
+    pub fn timeout_events_with_clock(
+        &self,
+        key: ProfileKey,
+        window: WindowSpec,
+        clock: &dyn Clock,
+    ) -> Vec<f64> {
+        let now = clock.now();
         let window_seconds = window.duration().as_secs_f64();
-        let cutoff = SystemTime::now()
+        let cutoff = now
             .checked_sub(window.duration())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let mut points = Vec::new();
@@ -143,7 +178,7 @@ impl MetricsStore {
             for sample in samples.iter().filter(|s| s.ts >= cutoff) {
                 if let ProbeResult::Err(err) = &sample.result
                     && is_timeout_error(&err.kind)
-                    && let Ok(age) = SystemTime::now().duration_since(sample.ts)
+                    && let Ok(age) = now.duration_since(sample.ts)
                 {
                     let x = (window_seconds - age.as_secs_f64()).max(0.0);
                     points.push(x);
@@ -390,6 +425,7 @@ impl MetricKind {
 #[cfg(test)]
 mod tests {
     use super::{MetricsStore, ProfileKey};
+    use crate::common::time::Clock;
     use crate::config::{SamplingConfig, WindowSpec};
     use crate::metrics::MetricKind;
     use crate::probe::{NegotiatedProtocol, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample};
@@ -397,9 +433,18 @@ mod tests {
     use uuid::Uuid;
 
     fn ok_sample(target_id: Uuid, profile_id: Uuid, total_ms: u64) -> ProbeSample {
+        ok_sample_at(SystemTime::now(), target_id, profile_id, total_ms)
+    }
+
+    fn ok_sample_at(
+        ts: SystemTime,
+        target_id: Uuid,
+        profile_id: Uuid,
+        total_ms: u64,
+    ) -> ProbeSample {
         let total = Duration::from_millis(total_ms);
         ProbeSample {
-            ts: SystemTime::now(),
+            ts,
             target_id,
             profile_id,
             result: ProbeResult::Ok,
@@ -449,6 +494,14 @@ mod tests {
             remote: None,
             tcp_info: None,
             ebpf: None,
+        }
+    }
+
+    struct FixedClock(SystemTime);
+
+    impl Clock for FixedClock {
+        fn now(&self) -> SystemTime {
+            self.0
         }
     }
 
@@ -543,5 +596,31 @@ mod tests {
         assert_eq!(total_stats.min, Some(20.0));
         assert_eq!(total_stats.max, Some(30.0));
         assert_eq!(total_stats.last, Some(30.0));
+    }
+
+    #[test]
+    fn timeseries_with_clock_uses_fixed_now() {
+        let mut store = MetricsStore::new();
+        let target_id = Uuid::new_v4();
+        let profile_id = Uuid::new_v4();
+        let key = ProfileKey {
+            target_id,
+            profile_id,
+        };
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let sample_ts = now - Duration::from_secs(10);
+        store.push_sample(key, ok_sample_at(sample_ts, target_id, profile_id, 120), 16);
+
+        let points = store.timeseries_with_clock(
+            key,
+            WindowSpec::M1,
+            MetricKind::Total,
+            None,
+            &FixedClock(now),
+        );
+        assert_eq!(points.len(), 1);
+        let (x, _) = points[0];
+        assert!((x - 50.0).abs() < 1e-6);
     }
 }
