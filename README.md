@@ -5,7 +5,7 @@
 A real-time HTTP latency and network quality monitoring tool with an interactive terminal UI. Built in Rust for high performance and reliability.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)
 
 ## Features
 
@@ -53,7 +53,7 @@ A real-time HTTP latency and network quality monitoring tool with an interactive
 ## Installation
 
 ### Prerequisites
-- Rust 1.70 or later
+- Rust 1.92 or later
 - libcurl with HTTP/2 support
 
 ### Build from Source
@@ -188,7 +188,7 @@ TCP_INFO metrics (`cwnd`, `ssthresh`, `rtt`, `rttvar`, `retrans`, `reordering`) 
 ## Requirements
 
 - **Operating System**: Linux (full features), macOS/Windows (limited TCP metrics)
-- **Rust**: 1.70+
+- **Rust**: 1.92+
 - **Dependencies**: libcurl with HTTP/2 support
 
 ## License

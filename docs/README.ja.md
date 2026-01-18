@@ -5,7 +5,7 @@
 インタラクティブなターミナル UI を備えたリアルタイム HTTP レイテンシおよびネットワーク品質監視ツール。高性能と信頼性のために Rust で構築されています。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)
 
 ## 特徴
 
@@ -53,7 +53,7 @@
 ## インストール
 
 ### 前提条件
-- Rust 1.70 以降
+- Rust 1.92 以降
 - HTTP/2 サポート付き libcurl
 
 ### ソースからビルド
@@ -188,7 +188,7 @@ TCP_INFO メトリクス（`cwnd`、`ssthresh`、`rtt`、`rttvar`、`retrans`、
 ## システム要件
 
 - **オペレーティングシステム**：Linux（フル機能）、macOS/Windows（限定的な TCP メトリクス）
-- **Rust**：1.70+
+- **Rust**：1.92+
 - **依存関係**：HTTP/2 サポート付き libcurl
 
 ## ライセンス

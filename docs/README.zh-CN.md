@@ -5,7 +5,7 @@
 一个实时 HTTP 延迟和网络质量监控工具，具有交互式终端界面。使用 Rust 构建，提供高性能和稳定性。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)
 
 ## 特色功能
 
@@ -53,7 +53,7 @@
 ## 安装
 
 ### 前置需求
-- Rust 1.70 或更新版本
+- Rust 1.92 或更新版本
 - 支持 HTTP/2 的 libcurl
 
 ### 从源码构建
@@ -188,7 +188,7 @@ TCP_INFO 指标（`cwnd`、`ssthresh`、`rtt`、`rttvar`、`retrans`、`reorderi
 ## 系统需求
 
 - **操作系统**：Linux（完整功能）、macOS/Windows（有限的 TCP 指标）
-- **Rust**：1.70+
+- **Rust**：1.92+
 - **依赖项**：支持 HTTP/2 的 libcurl
 
 ## 许可证
