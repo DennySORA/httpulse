@@ -1,3 +1,5 @@
+mod features;
+
 pub mod app;
 pub mod config;
 pub mod data_model;
