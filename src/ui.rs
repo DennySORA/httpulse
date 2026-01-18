@@ -1,6 +1,6 @@
 use crate::app::{
-    apply_edit_command, parse_profile_specs, parse_target_url, AppState, ProfileViewMode,
-    TargetPaneMode,
+    apply_edit_command, parse_profile_specs, parse_target_url, AppState, MetricsCategory,
+    ProfileViewMode, TargetPaneMode,
 };
 use crate::metrics::MetricKind;
 use crate::metrics_aggregate::ProfileKey;
@@ -28,10 +28,6 @@ use url::Url;
 const MIN_TERMINAL_WIDTH: u16 = 100;
 /// Minimum terminal height required (rows)
 const MIN_TERMINAL_HEIGHT: u16 = 24;
-/// Number of metrics in METRIC_GROUPS
-const METRICS_COUNT: usize = 17;
-/// Number of category headers in metrics table
-const CATEGORY_COUNT: usize = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsField {
@@ -327,7 +323,7 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
             ("w", "Window"),
             ("Up/Down", "Select"),
             ("Tab", "Profile"),
-            ("[/]", "Scroll"),
+            ("[/]", "Category"),
         ],
         InputMode::Help => vec![("Esc", "Close"), ("q", "Close")],
         InputMode::Settings => vec![
@@ -874,29 +870,15 @@ fn handle_normal_key(
         KeyCode::Char('6') => app.toggle_metric(MetricKind::Download),
         KeyCode::Char('7') => app.toggle_metric(MetricKind::Rtt),
         KeyCode::Char('8') => app.toggle_metric(MetricKind::Retrans),
-        // Metrics table scrolling
-        KeyCode::PageDown | KeyCode::Char(']') => {
+        // Metrics category navigation
+        KeyCode::Char(']') => {
             if let Some(target) = app.selected_target_mut() {
-                // Total rows = metrics(17) + categories(5) + separators(4) = 26
-                let total_rows = METRICS_COUNT + CATEGORY_COUNT + (CATEGORY_COUNT - 1);
-                target.metrics_scroll =
-                    (target.metrics_scroll + 5).min(total_rows.saturating_sub(1));
+                target.metrics_category = target.metrics_category.next();
             }
         }
-        KeyCode::PageUp | KeyCode::Char('[') => {
+        KeyCode::Char('[') => {
             if let Some(target) = app.selected_target_mut() {
-                target.metrics_scroll = target.metrics_scroll.saturating_sub(5);
-            }
-        }
-        KeyCode::Home => {
-            if let Some(target) = app.selected_target_mut() {
-                target.metrics_scroll = 0;
-            }
-        }
-        KeyCode::End => {
-            if let Some(target) = app.selected_target_mut() {
-                let total_rows = METRICS_COUNT + CATEGORY_COUNT + (CATEGORY_COUNT - 1);
-                target.metrics_scroll = total_rows.saturating_sub(1);
+                target.metrics_category = target.metrics_category.prev();
             }
         }
         _ => {}
@@ -1748,87 +1730,28 @@ fn style_for_timeout_count(count: u64) -> Style {
     }
 }
 
-/// Metric display configuration with category grouping
-struct MetricDisplay {
-    metric: MetricKind,
-    category: &'static str,
+/// Get metrics for a specific category
+fn metrics_for_category(category: MetricsCategory) -> &'static [MetricKind] {
+    match category {
+        MetricsCategory::Latency => &[
+            MetricKind::Dns,
+            MetricKind::Connect,
+            MetricKind::Tls,
+            MetricKind::Ttfb,
+            MetricKind::Download,
+            MetricKind::Total,
+        ],
+        MetricsCategory::Quality => &[MetricKind::Rtt, MetricKind::RttVar, MetricKind::Jitter],
+        MetricsCategory::Reliability => &[
+            MetricKind::Retrans,
+            MetricKind::Reordering,
+            MetricKind::TransportLoss,
+            MetricKind::ProbeLossRate,
+        ],
+        MetricsCategory::Throughput => &[MetricKind::GoodputBps, MetricKind::BandwidthUtilization],
+        MetricsCategory::Tcp => &[MetricKind::Cwnd, MetricKind::Ssthresh],
+    }
 }
-
-const METRIC_GROUPS: &[MetricDisplay] = &[
-    // Latency Breakdown
-    MetricDisplay {
-        metric: MetricKind::Dns,
-        category: "Latency",
-    },
-    MetricDisplay {
-        metric: MetricKind::Connect,
-        category: "Latency",
-    },
-    MetricDisplay {
-        metric: MetricKind::Tls,
-        category: "Latency",
-    },
-    MetricDisplay {
-        metric: MetricKind::Ttfb,
-        category: "Latency",
-    },
-    MetricDisplay {
-        metric: MetricKind::Download,
-        category: "Latency",
-    },
-    MetricDisplay {
-        metric: MetricKind::Total,
-        category: "Latency",
-    },
-    // Quality Metrics
-    MetricDisplay {
-        metric: MetricKind::Rtt,
-        category: "Quality",
-    },
-    MetricDisplay {
-        metric: MetricKind::RttVar,
-        category: "Quality",
-    },
-    MetricDisplay {
-        metric: MetricKind::Jitter,
-        category: "Quality",
-    },
-    // Reliability Metrics
-    MetricDisplay {
-        metric: MetricKind::Retrans,
-        category: "Reliability",
-    },
-    MetricDisplay {
-        metric: MetricKind::Reordering,
-        category: "Reliability",
-    },
-    MetricDisplay {
-        metric: MetricKind::TransportLoss,
-        category: "Reliability",
-    },
-    MetricDisplay {
-        metric: MetricKind::ProbeLossRate,
-        category: "Reliability",
-    },
-    // Throughput Metrics
-    MetricDisplay {
-        metric: MetricKind::GoodputBps,
-        category: "Throughput",
-    },
-    MetricDisplay {
-        metric: MetricKind::BandwidthUtilization,
-        category: "Throughput",
-    },
-    // TCP State Metrics
-    MetricDisplay {
-        metric: MetricKind::Cwnd,
-        category: "TCP",
-    },
-    MetricDisplay {
-        metric: MetricKind::Ssthresh,
-        category: "TCP",
-    },
-];
 
 fn draw_metrics_table(
     frame: &mut ratatui::Frame,
@@ -1845,6 +1768,29 @@ fn draw_metrics_table(
         ProfileViewMode::Compare => target.profiles.iter().collect(),
     };
 
+    // Build category tabs
+    let tab_spans: Vec<Span> = MetricsCategory::ALL
+        .iter()
+        .enumerate()
+        .flat_map(|(i, cat)| {
+            let is_selected = *cat == target.metrics_category;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let mut spans = vec![Span::styled(format!(" {} ", cat.label()), style)];
+            if i < MetricsCategory::ALL.len() - 1 {
+                spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+            }
+            spans
+        })
+        .collect();
+    let tabs_line = Line::from(tab_spans);
+
+    // Build header row
     let mut header_cells: Vec<Line> = vec![Line::from(Span::styled(
         "Metric",
         Style::default()
@@ -1860,89 +1806,37 @@ fn draw_metrics_table(
     }
     let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
-    let mut all_rows: Vec<Row> = Vec::new();
-    let mut last_category = "";
+    // Build metric rows for selected category
+    let metrics = metrics_for_category(target.metrics_category);
+    let rows: Vec<Row> = metrics
+        .iter()
+        .map(|&metric| {
+            let is_selected = app.selected_metrics.contains(&metric);
+            let metric_style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-    for metric_display in METRIC_GROUPS {
-        // Add category separator row
-        if metric_display.category != last_category {
-            if !last_category.is_empty() {
-                // Add empty separator row between categories
-                let empty_cells: Vec<Cell> =
-                    std::iter::repeat_n(Cell::from(""), profiles.len() + 1).collect();
-                all_rows.push(Row::new(empty_cells).height(1));
+            let unit = metric.unit();
+            let label_with_unit = if unit.is_empty() {
+                metric.label().to_string()
+            } else {
+                format!("{} ({})", metric.label(), unit)
+            };
+
+            let mut cells: Vec<Cell> = Vec::new();
+            cells.push(Cell::from(Span::styled(label_with_unit, metric_style)));
+            for profile in &profiles {
+                let aggregate = app.target_aggregate(target, profile);
+                let stats = aggregate.by_metric.get(&metric);
+                cells.push(Cell::from(format_stat_triplet(metric, stats)));
             }
-            // Add category header
-            let category_style = Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC);
-            let mut cat_cells: Vec<Cell> = vec![Cell::from(Span::styled(
-                format!("─ {} ─", metric_display.category),
-                category_style,
-            ))];
-            cat_cells.extend(std::iter::repeat_n(Cell::from(""), profiles.len()));
-            all_rows.push(Row::new(cat_cells));
-            last_category = metric_display.category;
-        }
-
-        let metric = metric_display.metric;
-        let is_selected = app.selected_metrics.contains(&metric);
-        let metric_style = if is_selected {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        let unit = metric.unit();
-        let label_with_unit = if unit.is_empty() {
-            format!("  {}", metric.label())
-        } else {
-            format!("  {} ({})", metric.label(), unit)
-        };
-
-        let mut cells: Vec<Cell> = Vec::new();
-        cells.push(Cell::from(Span::styled(label_with_unit, metric_style)));
-        for profile in &profiles {
-            let aggregate = app.target_aggregate(target, profile);
-            let stats = aggregate.by_metric.get(&metric);
-            cells.push(Cell::from(format_stat_triplet(metric, stats)));
-        }
-        all_rows.push(Row::new(cells));
-    }
-
-    // Calculate visible rows based on area height
-    // Area height - borders (2) - header (1) = visible content rows
-    let visible_rows = (area.height as usize).saturating_sub(3);
-    let total_rows = all_rows.len();
-    let scroll = target
-        .metrics_scroll
-        .min(total_rows.saturating_sub(visible_rows));
-
-    // Apply scroll offset - skip rows and take only visible ones
-    let rows: Vec<Row> = all_rows
-        .into_iter()
-        .skip(scroll)
-        .take(visible_rows)
+            Row::new(cells)
+        })
         .collect();
-
-    // Build title with scroll indicator
-    let title = if total_rows > visible_rows {
-        let scroll_pct = if total_rows > visible_rows {
-            (scroll * 100) / (total_rows - visible_rows).max(1)
-        } else {
-            0
-        };
-        format!(
-            " Metrics (P50/P99/Mean) [{}/{}] {}% ",
-            scroll + 1,
-            total_rows,
-            scroll_pct
-        )
-    } else {
-        " Metrics (P50/P99/Mean) ".to_string()
-    };
 
     let widths: Vec<Constraint> = std::iter::once(Constraint::Length(18))
         .chain(profiles.iter().map(|_| Constraint::Length(18)))
@@ -1950,7 +1844,8 @@ fn draw_metrics_table(
 
     let table = Table::new(rows, widths).header(header).block(
         Block::default()
-            .title(title)
+            .title(" Metrics (P50/P99/Mean) ")
+            .title_bottom(tabs_line.alignment(Alignment::Center))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     );

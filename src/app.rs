@@ -21,6 +21,57 @@ pub enum TargetPaneMode {
     Summary,
 }
 
+/// Metrics category for tab-based navigation
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub enum MetricsCategory {
+    #[default]
+    Latency,
+    Quality,
+    Reliability,
+    Throughput,
+    Tcp,
+}
+
+impl MetricsCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            MetricsCategory::Latency => "Latency",
+            MetricsCategory::Quality => "Quality",
+            MetricsCategory::Reliability => "Reliability",
+            MetricsCategory::Throughput => "Throughput",
+            MetricsCategory::Tcp => "TCP",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            MetricsCategory::Latency => MetricsCategory::Quality,
+            MetricsCategory::Quality => MetricsCategory::Reliability,
+            MetricsCategory::Reliability => MetricsCategory::Throughput,
+            MetricsCategory::Throughput => MetricsCategory::Tcp,
+            MetricsCategory::Tcp => MetricsCategory::Latency,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            MetricsCategory::Latency => MetricsCategory::Tcp,
+            MetricsCategory::Quality => MetricsCategory::Latency,
+            MetricsCategory::Reliability => MetricsCategory::Quality,
+            MetricsCategory::Throughput => MetricsCategory::Reliability,
+            MetricsCategory::Tcp => MetricsCategory::Throughput,
+        }
+    }
+
+    pub const ALL: [MetricsCategory; 5] = [
+        MetricsCategory::Latency,
+        MetricsCategory::Quality,
+        MetricsCategory::Reliability,
+        MetricsCategory::Throughput,
+        MetricsCategory::Tcp,
+    ];
+}
+
 impl TargetPaneMode {
     pub fn cycle(self) -> Self {
         match self {
@@ -59,8 +110,8 @@ pub struct TargetRuntime {
     pub view_mode: ProfileViewMode,
     pub selected_profile: usize,
     pub pane_mode: TargetPaneMode,
-    /// Scroll offset for metrics table (number of rows scrolled)
-    pub metrics_scroll: usize,
+    /// Selected metrics category for tab-based navigation
+    pub metrics_category: MetricsCategory,
 }
 
 pub struct ProfileRuntime {
@@ -122,7 +173,7 @@ impl AppState {
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
             pane_mode: TargetPaneMode::Split,
-            metrics_scroll: 0,
+            metrics_category: MetricsCategory::default(),
         });
         self.selected_target = self.targets.len().saturating_sub(1);
     }
@@ -432,7 +483,7 @@ mod tests {
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
             pane_mode: TargetPaneMode::Split,
-            metrics_scroll: 0,
+            metrics_category: MetricsCategory::default(),
         };
 
         let updated =
@@ -485,7 +536,7 @@ mod tests {
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
             pane_mode: TargetPaneMode::Split,
-            metrics_scroll: 0,
+            metrics_category: MetricsCategory::default(),
         };
 
         assert!(apply_edit_command(&target, "foo=bar dns=maybe").is_none());
