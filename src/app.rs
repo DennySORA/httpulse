@@ -59,6 +59,8 @@ pub struct TargetRuntime {
     pub view_mode: ProfileViewMode,
     pub selected_profile: usize,
     pub pane_mode: TargetPaneMode,
+    /// Scroll offset for metrics table (number of rows scrolled)
+    pub metrics_scroll: usize,
 }
 
 pub struct ProfileRuntime {
@@ -120,6 +122,7 @@ impl AppState {
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
             pane_mode: TargetPaneMode::Split,
+            metrics_scroll: 0,
         });
         self.selected_target = self.targets.len().saturating_sub(1);
     }
@@ -429,6 +432,7 @@ mod tests {
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
             pane_mode: TargetPaneMode::Split,
+            metrics_scroll: 0,
         };
 
         let updated =
@@ -481,6 +485,7 @@ mod tests {
             view_mode: ProfileViewMode::Single,
             selected_profile: 0,
             pane_mode: TargetPaneMode::Split,
+            metrics_scroll: 0,
         };
 
         assert!(apply_edit_command(&target, "foo=bar dns=maybe").is_none());

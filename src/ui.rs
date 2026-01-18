@@ -24,6 +24,15 @@ use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 use url::Url;
 
+/// Minimum terminal width required (columns)
+const MIN_TERMINAL_WIDTH: u16 = 100;
+/// Minimum terminal height required (rows)
+const MIN_TERMINAL_HEIGHT: u16 = 24;
+/// Number of metrics in METRIC_GROUPS
+const METRICS_COUNT: usize = 17;
+/// Number of category headers in metrics table
+const CATEGORY_COUNT: usize = 5;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsField {
     UiRefreshHz,
@@ -123,6 +132,12 @@ pub fn run_ui(
 
         terminal.draw(|frame| {
             let size = frame.area();
+
+            // Check minimum terminal size
+            if size.width < MIN_TERMINAL_WIDTH || size.height < MIN_TERMINAL_HEIGHT {
+                draw_terminal_too_small(frame, size);
+                return;
+            }
 
             // Main layout: Header, Content, Input (optional), Footer
             let mut constraints = vec![
@@ -312,7 +327,7 @@ fn draw_footer(frame: &mut ratatui::Frame, area: Rect, mode: InputMode) {
             ("w", "Window"),
             ("Up/Down", "Select"),
             ("Tab", "Profile"),
-            ("1-8", "Metrics"),
+            ("[/]", "Scroll"),
         ],
         InputMode::Help => vec![("Esc", "Close"), ("q", "Close")],
         InputMode::Settings => vec![
@@ -859,6 +874,31 @@ fn handle_normal_key(
         KeyCode::Char('6') => app.toggle_metric(MetricKind::Download),
         KeyCode::Char('7') => app.toggle_metric(MetricKind::Rtt),
         KeyCode::Char('8') => app.toggle_metric(MetricKind::Retrans),
+        // Metrics table scrolling
+        KeyCode::PageDown | KeyCode::Char(']') => {
+            if let Some(target) = app.selected_target_mut() {
+                // Total rows = metrics(17) + categories(5) + separators(4) = 26
+                let total_rows = METRICS_COUNT + CATEGORY_COUNT + (CATEGORY_COUNT - 1);
+                target.metrics_scroll =
+                    (target.metrics_scroll + 5).min(total_rows.saturating_sub(1));
+            }
+        }
+        KeyCode::PageUp | KeyCode::Char('[') => {
+            if let Some(target) = app.selected_target_mut() {
+                target.metrics_scroll = target.metrics_scroll.saturating_sub(5);
+            }
+        }
+        KeyCode::Home => {
+            if let Some(target) = app.selected_target_mut() {
+                target.metrics_scroll = 0;
+            }
+        }
+        KeyCode::End => {
+            if let Some(target) = app.selected_target_mut() {
+                let total_rows = METRICS_COUNT + CATEGORY_COUNT + (CATEGORY_COUNT - 1);
+                target.metrics_scroll = total_rows.saturating_sub(1);
+            }
+        }
         _ => {}
     }
     false
@@ -1248,7 +1288,33 @@ fn draw_target_pane(
     match pane_mode {
         TargetPaneMode::Split => {
             // Split mode: [Summary+Stats | Metrics | Network Info] on top, Chart below
-            let mut v_constraints = vec![Constraint::Length(12), Constraint::Min(6)];
+            // Calculate dynamic top row height based on available space
+            let available_height = inner.height;
+            let error_height: u16 = if has_error { 2 } else { 0 };
+            let min_chart_height: u16 = 8;
+
+            // Metrics table needs: header(1) + metrics(17) + categories(5) + separators(4) + borders(2) = 29
+            // But we can show partial metrics with scrolling
+            let ideal_metrics_height: u16 = 29;
+            let remaining = available_height.saturating_sub(error_height + min_chart_height);
+
+            // Use percentage-based or capped height for top row
+            // Give 40-60% to top row depending on terminal height
+            let top_row_height = if available_height >= 50 {
+                // Large terminal: show more metrics
+                remaining.min(ideal_metrics_height).max(12)
+            } else if available_height >= 35 {
+                // Medium terminal: balanced split
+                (available_height * 45 / 100).max(12)
+            } else {
+                // Small terminal: minimum viable
+                12
+            };
+
+            let mut v_constraints = vec![
+                Constraint::Length(top_row_height),
+                Constraint::Min(min_chart_height),
+            ];
             if has_error {
                 v_constraints.push(Constraint::Length(2));
             }
@@ -1325,6 +1391,48 @@ fn draw_target_pane(
             }
         }
     }
+}
+
+/// Draw a warning when terminal is too small
+fn draw_terminal_too_small(frame: &mut ratatui::Frame, area: Rect) {
+    frame.render_widget(Clear, area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::styled(
+            "Terminal Too Small",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Current: "),
+            Span::styled(
+                format!("{}x{}", area.width, area.height),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(vec![
+            Span::raw("Minimum: "),
+            Span::styled(
+                format!("{}x{}", MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT),
+                Style::default().fg(Color::Green),
+            ),
+        ]),
+        Line::from(""),
+        Line::styled(
+            "Please resize your terminal",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Center).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red))
+            .title(" Monitor Network "),
+    );
+
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_error_bar(
@@ -1752,7 +1860,7 @@ fn draw_metrics_table(
     }
     let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
-    let mut rows: Vec<Row> = Vec::new();
+    let mut all_rows: Vec<Row> = Vec::new();
     let mut last_category = "";
 
     for metric_display in METRIC_GROUPS {
@@ -1762,7 +1870,7 @@ fn draw_metrics_table(
                 // Add empty separator row between categories
                 let empty_cells: Vec<Cell> =
                     std::iter::repeat_n(Cell::from(""), profiles.len() + 1).collect();
-                rows.push(Row::new(empty_cells).height(1));
+                all_rows.push(Row::new(empty_cells).height(1));
             }
             // Add category header
             let category_style = Style::default()
@@ -1773,7 +1881,7 @@ fn draw_metrics_table(
                 category_style,
             ))];
             cat_cells.extend(std::iter::repeat_n(Cell::from(""), profiles.len()));
-            rows.push(Row::new(cat_cells));
+            all_rows.push(Row::new(cat_cells));
             last_category = metric_display.category;
         }
 
@@ -1801,8 +1909,40 @@ fn draw_metrics_table(
             let stats = aggregate.by_metric.get(&metric);
             cells.push(Cell::from(format_stat_triplet(metric, stats)));
         }
-        rows.push(Row::new(cells));
+        all_rows.push(Row::new(cells));
     }
+
+    // Calculate visible rows based on area height
+    // Area height - borders (2) - header (1) = visible content rows
+    let visible_rows = (area.height as usize).saturating_sub(3);
+    let total_rows = all_rows.len();
+    let scroll = target
+        .metrics_scroll
+        .min(total_rows.saturating_sub(visible_rows));
+
+    // Apply scroll offset - skip rows and take only visible ones
+    let rows: Vec<Row> = all_rows
+        .into_iter()
+        .skip(scroll)
+        .take(visible_rows)
+        .collect();
+
+    // Build title with scroll indicator
+    let title = if total_rows > visible_rows {
+        let scroll_pct = if total_rows > visible_rows {
+            (scroll * 100) / (total_rows - visible_rows).max(1)
+        } else {
+            0
+        };
+        format!(
+            " Metrics (P50/P99/Mean) [{}/{}] {}% ",
+            scroll + 1,
+            total_rows,
+            scroll_pct
+        )
+    } else {
+        " Metrics (P50/P99/Mean) ".to_string()
+    };
 
     let widths: Vec<Constraint> = std::iter::once(Constraint::Length(18))
         .chain(profiles.iter().map(|_| Constraint::Length(18)))
@@ -1810,7 +1950,7 @@ fn draw_metrics_table(
 
     let table = Table::new(rows, widths).header(header).block(
         Block::default()
-            .title(" Metrics (P50/P99/Mean) ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     );
