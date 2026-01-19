@@ -1,84 +1,121 @@
-# Monitor Network
+# httpulse
+
+![httpulse](screenshot.png)
 
 [English](../README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-インタラクティブなターミナル UI を備えたリアルタイム HTTP レイテンシおよびネットワーク品質監視ツール。高性能と信頼性のために Rust で構築されています。
+> リアルタイム HTTP レイテンシとネットワーク品質監視ツール、インタラクティブなターミナル UI 付き。
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![CI](https://github.com/DennySORA/httpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/DennySORA/httpulse/actions/workflows/ci.yml)
+[![Release](https://github.com/DennySORA/httpulse/actions/workflows/release.yml/badge.svg)](https://github.com/DennySORA/httpulse/releases)
 
-## 特徴
+**httpulse** は HTTP 接続パフォーマンスを深く分析する強力なネットワーク診断ツールです。Rust で構築され、速度と信頼性を兼ね備え、DevOps エンジニア、SRE、開発者がリアルタイムでレイテンシのボトルネックやネットワーク問題を特定するのを支援します。
 
-### リアルタイム監視
-- **リアルタイム HTTP プローブ**：設定可能な間隔でターゲット URL を継続的に監視
-- **マルチターゲットサポート**：複数のエンドポイントを同時に監視
-- **プロファイル比較**：異なる HTTP 設定を並べて比較
+## クイックインストール
+
+**Linux / macOS：**
+```bash
+curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+**wget を使用：**
+```bash
+wget -qO- https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+**カスタムインストールディレクトリ：**
+```bash
+INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+詳細は [インストール](#インストール) セクションを参照してください。
+
+## なぜ httpulse？
+
+- **レイテンシ問題を正確に特定** — リクエスト時間を DNS、TCP 接続、TLS ハンドシェイク、TTFB、ダウンロードなどのフェーズに分解
+- **異なる設定を比較** — HTTP/1.1 vs HTTP/2、TLS 1.2 vs 1.3、ウォーム接続 vs コールド接続を並べてテスト
+- **複数のエンドポイントを同時監視** — 複数の URL を追跡し、それぞれ独立したメトリクスを収集
+- **カーネルレベルのインサイト** — Linux で TCP_INFO メトリクス（RTT、cwnd、再送回数）にアクセスし、正確な診断を提供
+- **美しい TUI** — インタラクティブなターミナルインターフェース、リアルタイムチャートと分類されたメトリクス
+
+## 機能
 
 ### 包括的なメトリクス
 
-#### レイテンシメトリクス
-- **DNS**：ドメイン名解決時間
-- **Connect**：TCP ハンドシェイク時間
-- **TLS**：TLS/SSL ハンドシェイク時間
-- **TTFB**：最初のバイトまでの時間（サーバー処理時間）
-- **Download**：コンテンツダウンロード時間
-- **Total**：完全なリクエストライフサイクル
-
-#### 品質と信頼性
-- **RTT**：TCP_INFO からのラウンドトリップタイム（カーネルレベルの精度）
-- **RTT 分散**：ネットワークパス安定性指標
-- **Jitter**：プローブ間レイテンシ変動
-- **Retransmissions**：TCP パケットロス指標
-- **Reordering**：パケット順序乱れイベント
-- **Probe Loss Rate**：アプリケーション層失敗率
-
-#### スループットと TCP 状態
-- **Goodput**：アプリケーション層スループット（bps）
-- **Bandwidth Utilization**：設定されたリンク容量に対する使用率
-- **cwnd**：TCP 輻輳ウィンドウサイズ
-- **ssthresh**：スロースタート閾値
+| カテゴリ | メトリクス |
+|----------|------------|
+| **レイテンシ** | DNS、TCP 接続、TLS ハンドシェイク、TTFB、ダウンロード、合計 |
+| **品質** | RTT、RTT 分散、Jitter |
+| **信頼性** | 再送回数、パケット順序乱れ、プローブ失敗率 |
+| **スループット** | Goodput (Mbps)、帯域幅使用率 |
+| **TCP 状態** | 輻輳ウィンドウ (cwnd)、スロースタート閾値 (ssthresh) |
 
 ### 設定可能なプロファイル
-- **HTTP/1.1 & HTTP/2**：異なるプロトコルバージョンをテスト
-- **TLS 1.2 & TLS 1.3**：TLS バージョンのパフォーマンスを比較
-- **接続再利用**：Warm（キープアライブ）vs Cold（新規接続）モード
+
+HTTP バージョン、TLS バージョン、接続モードを自由に組み合わせ：
+
+```
+h2+tls13+warm   # HTTP/2, TLS 1.3, 接続再利用
+h1+tls12+cold   # HTTP/1.1, TLS 1.2, 毎回新規接続
+```
 
 ### インタラクティブ TUI
-- **リアルタイムチャート**：時系列メトリクスを可視化
-- **カテゴリタブ**：整理されたメトリクス表示（レイテンシ/品質/信頼性/スループット/TCP）
-- **複数のビューモード**：分割、チャートのみ、メトリクスのみ、サマリー
-- **時間ウィンドウ**：1分、5分、15分、60分の集計期間
-- **用語集**：組み込みの用語説明
+
+- **リアルタイムチャート** — レイテンシトレンドを可視化
+- **複数のビューモード** — 分割、チャートのみ、メトリクスのみ、サマリー
+- **時間ウィンドウ** — 1 分、5 分、15 分、60 分の集計
+- **内蔵用語集** — 各メトリクスの意味を学習
 
 ## インストール
 
-### 前提条件
-- Rust 1.92 以降
-- HTTP/2 サポート付き libcurl
+### クイックインストール（推奨）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+### バイナリダウンロード
+
+[GitHub Releases](https://github.com/DennySORA/httpulse/releases) からプリビルドバイナリをダウンロード：
+
+| プラットフォーム | アーキテクチャ | ダウンロード |
+|------------------|----------------|--------------|
+| Linux | x86_64 | `httpulse-x86_64-unknown-linux-musl.tar.gz` |
+| Linux | ARM64 | `httpulse-aarch64-unknown-linux-musl.tar.gz` |
+| macOS | Intel | `httpulse-x86_64-apple-darwin.tar.gz` |
+| macOS | Apple Silicon | `httpulse-aarch64-apple-darwin.tar.gz` |
+| Windows | x86_64 | `httpulse-x86_64-pc-windows-msvc.zip` |
 
 ### ソースからビルド
 
 ```bash
-git clone https://github.com/yourusername/monitor_network.git
-cd monitor_network
+git clone https://github.com/DennySORA/httpulse.git
+cd httpulse
 cargo build --release
+# バイナリ：target/release/httpulse
 ```
 
-バイナリは `target/release/monitor_network` に作成されます。
+### Cargo インストール
+
+```bash
+cargo install --git https://github.com/DennySORA/httpulse.git
+```
 
 ## 使用方法
 
 ### 基本的な使用法
 
 ```bash
-# デフォルトターゲット（google.com）を監視
-./monitor_network
+# デフォルトターゲット (google.com) を監視
+httpulse
 
 # 特定のターゲットを監視
-./monitor_network -t https://example.com
+httpulse -t https://example.com
 
 # 複数のターゲットを監視
-./monitor_network -t https://google.com -t https://cloudflare.com -t https://github.com
+httpulse -t https://api.example.com -t https://cdn.example.com -t https://db.example.com
 ```
 
 ### コマンドラインオプション
@@ -86,73 +123,61 @@ cargo build --release
 | オプション | 説明 | デフォルト |
 |------------|------|------------|
 | `-t, --target <URL>` | プローブするターゲット URL（繰り返し可能） | `https://google.com` |
-| `--refresh-hz <N>` | UI リフレッシュレート（Hz） | `10` |
-| `--ebpf <MODE>` | eBPF モード：off\|minimal\|full | `off` |
+| `--refresh-hz <N>` | UI リフレッシュレート (Hz) | `10` |
+| `--ebpf <MODE>` | eBPF モード：`off` \| `minimal` \| `full` | `off` |
 
 ### キーボードショートカット
 
-#### ナビゲーション
 | キー | アクション |
 |------|------------|
-| `上/下` または `j/k` | ターゲットを選択 |
+| `j/k` または `↑/↓` | ターゲットを切り替え |
 | `Tab` | プロファイルを切り替え |
 | `[` / `]` | メトリクスカテゴリを切り替え |
-
-#### アクション
-| キー | アクション |
-|------|------------|
 | `a` | ターゲットを追加 |
-| `d` | 選択したターゲットを削除 |
+| `e` | ターゲットを編集 |
+| `d` | ターゲットを削除 |
 | `p` | プローブを一時停止/再開 |
 | `c` | 比較モードを切り替え |
-
-#### ビューコントロール
-| キー | アクション |
-|------|------------|
-| `g` | ペインモードを切り替え（分割/チャート/メトリクス/サマリー） |
-| `w` | 時間ウィンドウを切り替え（1m/5m/15m/60m） |
-| `1-8` | チャート上のメトリクス系列を切り替え |
-
-#### 一般
-| キー | アクション |
-|------|------------|
-| `?` | ヘルプを表示 |
-| `G` | 用語集を表示 |
-| `S` | 設定を開く |
+| `g` | ビューモードを切り替え |
+| `w` | 時間ウィンドウを切り替え |
+| `1-8` | チャートメトリクスを切り替え |
+| `?` | ヘルプ |
+| `G` | 用語集 |
+| `S` | 設定 |
 | `q` | 終了 |
 
 ### ターゲットの追加
 
-`a` でターゲットを追加する際、カスタムプロファイルを指定できます：
+`a` を押して URL を入力、オプションでプロファイル指定を追加：
 
 ```
-https://example.com h2+tls13+warm h1+tls12+cold
+https://api.example.com h2+tls13+warm h1+tls12+cold
 ```
 
 プロファイル形式：`<http>+<tls>+<conn>`
-- HTTP：`h1`、`h2`
-- TLS：`tls12`、`tls13`
-- 接続：`warm`（再利用）、`cold`（新規）
+- **HTTP**：`h1`、`h2`
+- **TLS**：`tls12`、`tls13`
+- **接続**：`warm`（再利用）、`cold`（新規）
 
 ### 設定
 
-`S` を押して設定を開き、以下を設定できます：
-- **UI リフレッシュレート**：更新頻度を調整
-- **リンク容量**：使用率計算のための帯域幅を設定
-- **プローブ間隔**：プローブ間の時間
-- **タイムアウト**：最大プローブ時間
-- **DNS**：DNS 解決タイミングの有効/無効
+`S` を押して設定：
+- UI リフレッシュレート
+- リンク容量（帯域幅使用率計算用）
+- プローブ間隔
+- タイムアウト時間
+- DNS タイミング切り替え
 
 ## メトリクスの理解
 
-### 統計表示
+### 統計形式
 
-メトリクスは **P50/P99/Mean** で表示されます：
-- **P50**：中央値（50パーセンタイル）
-- **P99**：99パーセンタイル（最悪の1%のサンプル）
-- **Mean**：算術平均
+メトリクスは **P50 / P99 / Mean** で表示：
+- **P50**：中央値（50 パーセンタイル）
+- **P99**：99 パーセンタイル（最悪の 1%）
+- **Mean**：平均値
 
-### 結果の解釈
+### クイックリファレンス
 
 | メトリクス | 良好 | 警告 | 重大 |
 |------------|------|------|------|
@@ -160,41 +185,41 @@ https://example.com h2+tls13+warm h1+tls12+cold
 | レイテンシ P99 | <100ms | 100-500ms | >500ms |
 | 再送回数 | 0 | 1-3 | >3 |
 
-### TCP 状態メトリクス（Linux のみ）
+### プラットフォームノート
 
-TCP_INFO メトリクス（`cwnd`、`ssthresh`、`rtt`、`rttvar`、`retrans`、`reordering`）はソケットオプションを通じてカーネルから抽出されます。これらはアプリケーション層のタイミングよりも正確な測定を提供します。
+- **Linux**：完全な TCP_INFO サポート（cwnd、ssthresh、rtt、rttvar、retrans、reordering）
+- **macOS/Windows**：アプリケーション層メトリクスのみ
 
 ## アーキテクチャ
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        メインスレッド                         │
-│  ┌─────────┐    ┌──────────┐    ┌─────────────────────────┐│
-│  │ AppState│◄───│ UI ループ │◄───│ crossbeam channel (rx)  ││
-│  └─────────┘    └──────────┘    └─────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
-                                            ▲
-                    ┌───────────────────────┴───────────────────────┐
-                    │                                               │
-        ┌───────────┴───────────┐               ┌───────────────────┴───────────┐
-        │    ワーカースレッド 1   │               │      ワーカースレッド N        │
-        │  ┌─────────────────┐  │               │  ┌─────────────────────────┐  │
-        │  │  ProbeClient    │  │      ...      │  │      ProbeClient        │  │
-        │  │  (libcurl)      │  │               │  │      (libcurl)          │  │
-        │  └─────────────────┘  │               │  └─────────────────────────┘  │
-        └───────────────────────┘               └───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         メインスレッド                           │
+│  ┌──────────┐    ┌───────────┐    ┌──────────────────────────┐ │
+│  │ AppState │◄───│ UI ループ │◄───│ crossbeam channel (rx)   │ │
+│  └──────────┘    └───────────┘    └──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                                              ▲
+              ┌───────────────────────────────┴─────────────────────────────┐
+              │                                                             │
+  ┌───────────┴────────────┐                          ┌─────────────────────┴───────────┐
+  │   ワーカースレッド 1    │           ...            │       ワーカースレッド N         │
+  │  ┌──────────────────┐  │                          │  ┌───────────────────────────┐  │
+  │  │   ProbeClient    │  │                          │  │       ProbeClient         │  │
+  │  │    (libcurl)     │  │                          │  │        (libcurl)          │  │
+  │  └──────────────────┘  │                          │  └───────────────────────────┘  │
+  └────────────────────────┘                          └─────────────────────────────────┘
 ```
 
 ## システム要件
 
-- **オペレーティングシステム**：Linux（フル機能）、macOS/Windows（限定的な TCP メトリクス）
-- **Rust**：1.92+
+- **OS**：Linux（フル機能）、macOS、Windows
 - **依存関係**：HTTP/2 サポート付き libcurl
 
 ## ライセンス
 
-MIT ライセンス - 詳細は [LICENSE](../LICENSE) を参照してください。
+MIT ライセンス - 詳細は [LICENSE](../LICENSE) を参照。
 
 ## コントリビューション
 
-コントリビューションを歓迎します！Issue や Pull Request をお気軽にお送りください。
+コントリビューション歓迎！Issue や Pull Request をお気軽にお送りください。
