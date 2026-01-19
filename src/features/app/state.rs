@@ -1,7 +1,8 @@
-use crate::config::{GlobalConfig, ProfileConfig, TargetConfig, default_profiles};
+use crate::config::{GlobalConfig, ProfileConfig, TargetConfig, default_profiles_for_capabilities};
 use crate::metrics::{MetricKind, WindowedAggregate};
 use crate::metrics_aggregate::{MetricsStore, ProfileKey};
 use crate::probe::{ProbeErrorKind, ProbeSample};
+use crate::probe_engine::detect_tls13_support;
 use crate::runtime::{ControlMessage, WorkerHandle, spawn_profile_worker};
 use std::collections::{BTreeMap, HashSet};
 use std::net::IpAddr;
@@ -151,7 +152,8 @@ impl AppState {
         profiles: Option<Vec<ProfileConfig>>,
         sample_tx: crossbeam_channel::Sender<ProbeSample>,
     ) {
-        let profiles = profiles.unwrap_or_else(default_profiles);
+        let profiles =
+            profiles.unwrap_or_else(|| default_profiles_for_capabilities(detect_tls13_support()));
         let mut target = TargetConfig::new(url, profiles.clone());
         target.sampling = crate::config::SamplingConfig::default();
         let mut profile_runtimes = Vec::new();

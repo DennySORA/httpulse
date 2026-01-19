@@ -3,9 +3,7 @@ use super::helpers::{
     parse_socket_addr, saturating_sub,
 };
 use crate::config::{ConnReusePolicy, HttpVersion, ProfileConfig, TargetConfig, TlsVersion};
-use crate::probe::{
-    EbpfConnStatsDelta, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample,
-};
+use crate::probe::{EbpfConnStatsDelta, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample};
 use curl::Error as CurlError;
 use curl::easy::{
     Easy2, Handler, HttpVersion as CurlHttpVersion, IpResolve, List, SslVersion, WriteError,

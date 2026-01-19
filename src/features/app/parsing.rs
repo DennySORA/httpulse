@@ -1,8 +1,9 @@
 use super::state::TargetRuntime;
 use crate::config::{
     ConnReusePolicy, HttpVersion, ProbeMethod, ProfileConfig, TargetConfig, TlsVersion,
-    default_profiles,
+    default_profiles_for_capabilities,
 };
+use crate::probe_engine::detect_tls13_support;
 
 pub use crate::common::net::parse_target_url;
 
@@ -14,7 +15,8 @@ pub fn parse_profile_specs(input: &str) -> Vec<ProfileConfig> {
         }
     }
     if profiles.is_empty() {
-        default_profiles()
+        // Auto-detect TLS 1.3 support and include it if available
+        default_profiles_for_capabilities(detect_tls13_support())
     } else {
         profiles
     }
@@ -129,7 +131,7 @@ mod tests {
     fn apply_edit_command_updates_target() {
         let url = Url::parse("https://google.com").unwrap();
         let target = TargetRuntime {
-            config: TargetConfig::new(url, default_profiles()),
+            config: TargetConfig::new(url, default_profiles_for_capabilities(false)),
             paused: false,
             last_ip: None,
             profiles: Vec::new(),
@@ -182,7 +184,7 @@ mod tests {
     fn apply_edit_command_returns_none_when_no_updates() {
         let url = Url::parse("https://google.com").unwrap();
         let target = TargetRuntime {
-            config: TargetConfig::new(url, default_profiles()),
+            config: TargetConfig::new(url, default_profiles_for_capabilities(false)),
             paused: false,
             last_ip: None,
             profiles: Vec::new(),

@@ -98,8 +98,10 @@ impl ProfileConfig {
     }
 }
 
-pub fn default_profiles() -> Vec<ProfileConfig> {
-    vec![
+/// Returns the default profiles based on system TLS capabilities.
+/// If `tls13_supported` is true, includes an additional TLS 1.3 profile.
+pub fn default_profiles_for_capabilities(tls13_supported: bool) -> Vec<ProfileConfig> {
+    let mut profiles = vec![
         ProfileConfig::new(
             "h2+tls12+warm",
             HttpVersion::H2,
@@ -116,7 +118,30 @@ pub fn default_profiles() -> Vec<ProfileConfig> {
             ProbeMethod::Get,
             4096,
         ),
-    ]
+    ];
+
+    if tls13_supported {
+        // Insert TLS 1.3 profile at the beginning (preferred)
+        profiles.insert(
+            0,
+            ProfileConfig::new(
+                "h2+tls13+warm",
+                HttpVersion::H2,
+                TlsVersion::Tls13,
+                ConnReusePolicy::Warm,
+                ProbeMethod::Get,
+                4096,
+            ),
+        );
+    }
+
+    profiles
+}
+
+/// Returns the default profiles without TLS capability detection.
+/// For backward compatibility - uses TLS 1.2 only profiles.
+pub fn default_profiles() -> Vec<ProfileConfig> {
+    default_profiles_for_capabilities(false)
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
