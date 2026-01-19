@@ -10,4 +10,5 @@ pub mod probe;
 pub mod probe_engine;
 pub mod runtime;
 pub mod settings;
+pub mod storage;
 pub mod ui;

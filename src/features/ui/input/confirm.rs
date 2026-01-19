@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::storage;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::super::state::InputMode;
@@ -11,6 +12,7 @@ pub(in crate::features::ui) fn handle_confirm_delete_key(
     match key.code {
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             app.remove_target(app.selected_target);
+            let _ = storage::save(&app.to_persisted_state());
             *input_mode = InputMode::Normal;
         }
         KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {

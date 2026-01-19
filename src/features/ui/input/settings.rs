@@ -1,4 +1,5 @@
 use crate::app::{AppState, apply_edit_command};
+use crate::storage;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::render::{seed_settings_input, settings_rows};
@@ -36,6 +37,7 @@ pub(in crate::features::ui) fn handle_settings_key(
                             let mut updated = target.config.clone();
                             updated.dns_enabled = !updated.dns_enabled;
                             app.update_target_config(app.selected_target, updated);
+                            let _ = storage::save(&app.to_persisted_state());
                         }
                     }
                     SettingsField::TargetPane => {
@@ -127,6 +129,7 @@ pub(in crate::features::ui) fn handle_settings_edit_key(
             }
 
             if applied {
+                let _ = storage::save(&app.to_persisted_state());
                 *input_mode = InputMode::Settings;
                 input_buffer.clear();
             }

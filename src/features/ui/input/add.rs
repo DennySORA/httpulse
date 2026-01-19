@@ -1,5 +1,6 @@
 use crate::app::{AppState, parse_profile_specs, parse_target_url};
 use crate::probe::ProbeSample;
+use crate::storage;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use url::Url;
 
@@ -22,6 +23,7 @@ pub(in crate::features::ui) fn handle_input_key(
                 InputMode::AddTarget => {
                     if let Some((url, profiles)) = parse_add_command(input_buffer) {
                         app.add_target(url, profiles, sample_tx.clone());
+                        let _ = storage::save(&app.to_persisted_state());
                     }
                 }
                 InputMode::Normal

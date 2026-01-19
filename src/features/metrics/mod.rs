@@ -2,10 +2,12 @@ pub mod aggregate;
 
 use crate::config::{ProfileId, TargetId, WindowSpec};
 use crate::probe::ProbeErrorKind;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MetricKind {
     Dns,
     Connect,

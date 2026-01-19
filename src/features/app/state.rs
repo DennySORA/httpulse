@@ -4,17 +4,20 @@ use crate::metrics_aggregate::{MetricsStore, ProfileKey};
 use crate::probe::{ProbeErrorKind, ProbeSample};
 use crate::probe_engine::detect_tls13_support;
 use crate::runtime::{ControlMessage, WorkerHandle, spawn_profile_worker};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::net::IpAddr;
 use url::Url;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProfileViewMode {
     Single,
     Compare,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TargetPaneMode {
     Split,
     Chart,
@@ -23,7 +26,8 @@ pub enum TargetPaneMode {
 }
 
 /// Metrics category for tab-based navigation
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MetricsCategory {
     #[default]
     Latency,
@@ -338,5 +342,72 @@ impl AppState {
             .map(|(_, count)| *count)
             .sum();
         summary
+    }
+
+    pub fn to_persisted_state(&self) -> crate::storage::PersistedState {
+        crate::storage::PersistedState {
+            version: "1".to_string(),
+            global_config: self.global.clone(),
+            targets: self
+                .targets
+                .iter()
+                .map(|t| crate::storage::PersistedTarget {
+                    config: t.config.clone(),
+                    view_mode: t.view_mode,
+                    selected_profile: t.selected_profile,
+                    pane_mode: t.pane_mode,
+                    metrics_category: t.metrics_category,
+                })
+                .collect(),
+            ui_state: crate::storage::PersistedUiState {
+                selected_target: self.selected_target,
+                selected_metric: self.selected_metric,
+                selected_metrics: self.selected_metrics.clone(),
+                window: self.window,
+            },
+        }
+    }
+
+    pub fn restore_from_persisted(
+        &mut self,
+        state: &crate::storage::PersistedState,
+        sample_tx: crossbeam_channel::Sender<crate::probe::ProbeSample>,
+    ) {
+        for persisted_target in &state.targets {
+            let profiles = persisted_target.config.profiles.clone();
+            let mut profile_runtimes = Vec::new();
+            for profile in &profiles {
+                let worker = spawn_profile_worker(
+                    persisted_target.config.clone(),
+                    profile.clone(),
+                    sample_tx.clone(),
+                );
+                profile_runtimes.push(ProfileRuntime {
+                    config: profile.clone(),
+                    worker,
+                    last_sample: None,
+                    last_error: None,
+                });
+            }
+
+            self.targets.push(TargetRuntime {
+                config: persisted_target.config.clone(),
+                paused: false,
+                last_ip: None,
+                profiles: profile_runtimes,
+                view_mode: persisted_target.view_mode,
+                selected_profile: persisted_target.selected_profile,
+                pane_mode: persisted_target.pane_mode,
+                metrics_category: persisted_target.metrics_category,
+            });
+        }
+
+        self.selected_target = state
+            .ui_state
+            .selected_target
+            .min(self.targets.len().saturating_sub(1));
+        self.selected_metric = state.ui_state.selected_metric;
+        self.selected_metrics = state.ui_state.selected_metrics.clone();
+        self.window = state.ui_state.window;
     }
 }

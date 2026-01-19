@@ -4,6 +4,7 @@ mod state;
 
 use crate::app::AppState;
 use crate::probe::ProbeSample;
+use crate::storage;
 use crossterm::event::{self, Event};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -184,6 +185,7 @@ pub fn run_ui(
         }
     }
 
+    let _ = storage::save(&app.to_persisted_state());
     cleanup_terminal(&mut terminal)?;
     Ok(())
 }
