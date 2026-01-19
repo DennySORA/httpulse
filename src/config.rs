@@ -101,9 +101,9 @@ impl ProfileConfig {
 pub fn default_profiles() -> Vec<ProfileConfig> {
     vec![
         ProfileConfig::new(
-            "h2+tls13+warm",
+            "h2+tls12+warm",
             HttpVersion::H2,
-            TlsVersion::Tls13,
+            TlsVersion::Tls12,
             ConnReusePolicy::Warm,
             ProbeMethod::Get,
             4096,

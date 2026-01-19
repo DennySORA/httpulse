@@ -4,6 +4,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 pub(super) fn map_curl_error(err: &CurlError) -> ProbeError {
+    let message = err.to_string();
+    let message_lower = message.to_ascii_lowercase();
+
     let kind = if err.is_couldnt_resolve_host() || err.is_couldnt_resolve_proxy() {
         ProbeErrorKind::DnsOther
     } else if err.is_operation_timedout() {
@@ -15,19 +18,29 @@ pub(super) fn map_curl_error(err: &CurlError) -> ProbeError {
         || err.is_ssl_certproblem()
         || err.is_ssl_cipher()
     {
-        ProbeErrorKind::TlsHandshakeFailed
+        if is_tls_version_error(&message_lower) {
+            ProbeErrorKind::TlsVersionMismatch
+        } else {
+            ProbeErrorKind::TlsHandshakeFailed
+        }
     } else if err.is_http_returned_error() {
         ProbeErrorKind::HttpStatusError
     } else if err.is_read_error() {
         ProbeErrorKind::ReadTimeout
+    } else if is_tls_version_error(&message_lower) {
+        ProbeErrorKind::TlsVersionMismatch
     } else {
         ProbeErrorKind::IoError
     };
 
-    ProbeError {
-        kind,
-        message: err.to_string(),
-    }
+    ProbeError { kind, message }
+}
+
+fn is_tls_version_error(message: &str) -> bool {
+    message.contains("ssl_min_max_version")
+        || message.contains("unsupported protocol")
+        || message.contains("tls")
+            && (message.contains("version") || message.contains("unsupported"))
 }
 
 pub(super) fn is_dns_timeout_message(message: &str) -> bool {
@@ -86,7 +99,7 @@ pub(super) fn fetch_tcp_info(handle: *mut curl_sys::CURL) -> Option<TcpInfoSnaps
 
 #[cfg(test)]
 mod tests {
-    use super::{is_dns_timeout_message, parse_socket_addr, saturating_sub};
+    use super::{is_dns_timeout_message, is_tls_version_error, parse_socket_addr, saturating_sub};
     use std::time::Duration;
 
     #[test]
@@ -123,5 +136,15 @@ mod tests {
     fn saturating_sub_returns_difference() {
         let result = saturating_sub(Duration::from_millis(10), Duration::from_millis(4));
         assert_eq!(result, Duration::from_millis(6));
+    }
+
+    #[test]
+    fn tls_version_error_detection() {
+        assert!(is_tls_version_error("ssl_min_max_version not supported"));
+        assert!(is_tls_version_error("unsupported protocol"));
+        assert!(is_tls_version_error("tls version not supported"));
+        assert!(is_tls_version_error("tls unsupported by backend"));
+        assert!(!is_tls_version_error("connection refused"));
+        assert!(!is_tls_version_error("ssl certificate error"));
     }
 }
