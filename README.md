@@ -1,5 +1,7 @@
 # Monitor Network
 
+![httpulse](docs/01.png)
+
 [繁體中文](docs/README.zh-TW.md) | [简体中文](docs/README.zh-CN.md) | [日本語](docs/README.ja.md)
 
 A real-time HTTP latency and network quality monitoring tool with an interactive terminal UI. Built in Rust for high performance and reliability.
