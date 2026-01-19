@@ -1,2 +1,6 @@
 /target
 /.gemini/
+
+# Claude Code
+.claude/
+.rewrite/

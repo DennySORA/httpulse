@@ -21,10 +21,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-          # Linux x86_64 (musl - static)
+          # Linux x86_64 (musl - static) - use cross for proper musl toolchain
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
+            cross: true
           # Linux ARM64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -35,11 +36,11 @@ jobs:
             os: ubuntu-latest
             archive: tar.gz
             cross: true
-          # macOS x86_64
+          # macOS x86_64 (cross-compile from ARM64 runner)
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
-          # macOS ARM64 (Apple Silicon)
+          # macOS ARM64 (Apple Silicon - native)
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
@@ -54,16 +55,19 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Install musl-tools (Linux musl)
-        if: contains(matrix.target, 'musl') && matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install dependencies (Linux gnu)
+        if: matrix.os == 'ubuntu-latest' && !matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
 
       - name: Install cross
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        uses: taiki-e/install-action@cross
 
       - name: Build (cross)
         if: matrix.cross
