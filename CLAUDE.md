@@ -28,6 +28,12 @@ Use **context7** to look up the **latest** information for any relevant or requi
 
 - `cargo test --workspace --all-features`
 
+### Additional Strict Gates (Recommended)
+
+- `cargo deny check` — Licenses, advisories, bans, sources
+- `cargo audit` — Security advisories (requires `cargo install cargo-audit`)
+- `cargo +nightly udeps --workspace --all-targets` — Unused dependencies (requires nightly)
+
 ## Architecture
 
 ```

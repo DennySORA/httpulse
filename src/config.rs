@@ -7,7 +7,7 @@ use uuid::Uuid;
 pub type TargetId = Uuid;
 pub type ProfileId = Uuid;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlobalConfig {
     pub ui_refresh_hz: u16,
     pub default_window: WindowSpec,
@@ -35,7 +35,7 @@ impl Default for GlobalConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TargetConfig {
     pub id: TargetId,
     pub url: Url,
@@ -64,7 +64,7 @@ impl TargetConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProfileConfig {
     pub id: ProfileId,
     pub name: String,
@@ -119,7 +119,7 @@ pub fn default_profiles() -> Vec<ProfileConfig> {
     ]
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct TimeoutBreakdown {
     pub dns: Duration,
     pub connect: Duration,
@@ -128,7 +128,7 @@ pub struct TimeoutBreakdown {
     pub read: Duration,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SamplingConfig {
     pub max_points_per_window: usize,
     pub histogram: HistogramConfig,
@@ -143,7 +143,7 @@ impl Default for SamplingConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistogramConfig {
     pub latency_low_ms: u64,
     pub latency_high_ms: u64,
@@ -160,7 +160,8 @@ impl Default for HistogramConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum HttpVersion {
     H1,
     H2,
@@ -175,7 +176,8 @@ impl fmt::Display for HttpVersion {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TlsVersion {
     Tls12,
     Tls13,
@@ -190,7 +192,8 @@ impl fmt::Display for TlsVersion {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ConnReusePolicy {
     Warm,
     Cold,
@@ -205,7 +208,8 @@ impl fmt::Display for ConnReusePolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ProbeMethod {
     Head,
     Get,
@@ -248,7 +252,8 @@ impl fmt::Display for EbpfMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum WindowSpec {
     M1,
     M5,
@@ -282,7 +287,8 @@ impl fmt::Display for WindowSpec {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct SecretString(String);
 
 impl SecretString {
