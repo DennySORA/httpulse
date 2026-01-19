@@ -25,11 +25,6 @@ curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh 
 wget -qO- https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
 ```
 
-**自定义安装目录：**
-```bash
-INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
-```
-
 详见 [安装](#安装) 章节。
 
 ## 为何选择 httpulse？

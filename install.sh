@@ -3,7 +3,8 @@ set -euo pipefail
 
 REPO="DennySORA/httpulse"
 BINARY_NAME="httpulse"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+DEFAULT_INSTALL_DIR="$HOME/.local/bin"
+INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 
 # Colors
 RED='\033[0;31m'
@@ -124,6 +125,12 @@ main() {
     # Install
     info "Installing to ${INSTALL_DIR}..."
 
+    # Create install directory if it doesn't exist
+    if [[ ! -d "$INSTALL_DIR" ]]; then
+        info "Creating directory ${INSTALL_DIR}..."
+        mkdir -p "$INSTALL_DIR"
+    fi
+
     if [[ -w "$INSTALL_DIR" ]]; then
         mv "${tmpdir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
         chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
@@ -133,14 +140,27 @@ main() {
         sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     fi
 
-    # Verify
-    if command -v "$BINARY_NAME" &> /dev/null; then
-        success "Successfully installed ${BINARY_NAME} ${version}"
+    success "Successfully installed ${BINARY_NAME} ${version}"
+    echo ""
+
+    # Check if INSTALL_DIR is in PATH
+    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+        warn "${INSTALL_DIR} is not in your PATH"
         echo ""
-        info "Run '${BINARY_NAME} --help' to get started"
+        info "Add it to your shell config:"
+        echo ""
+        echo "  # For bash (~/.bashrc or ~/.bash_profile):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+        echo "  # For zsh (~/.zshrc):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+        echo "  # For fish (~/.config/fish/config.fish):"
+        echo "  fish_add_path \$HOME/.local/bin"
+        echo ""
+        info "Then restart your shell or run: source ~/.zshrc (or your shell config)"
     else
-        warn "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
-        warn "Make sure ${INSTALL_DIR} is in your PATH"
+        info "Run '${BINARY_NAME} --help' to get started"
     fi
 
     echo ""

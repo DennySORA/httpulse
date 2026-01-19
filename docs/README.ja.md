@@ -25,11 +25,6 @@ curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh 
 wget -qO- https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
 ```
 
-**カスタムインストールディレクトリ：**
-```bash
-INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
-```
-
 詳細は [インストール](#インストール) セクションを参照してください。
 
 ## なぜ httpulse？
