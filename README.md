@@ -1,6 +1,6 @@
 # Monitor Network
 
-![httpulse](docs/01.png)
+![httpulse](docs/screenshot.png)
 
 [繁體中文](docs/README.zh-TW.md) | [简体中文](docs/README.zh-CN.md) | [日本語](docs/README.ja.md)
 
@@ -8,6 +8,32 @@ A real-time HTTP latency and network quality monitoring tool with an interactive
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)
+[![CI](https://github.com/DennySORA/httpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/DennySORA/httpulse/actions/workflows/ci.yml)
+[![Release](https://github.com/DennySORA/httpulse/actions/workflows/release.yml/badge.svg)](https://github.com/DennySORA/httpulse/releases)
+
+## Quick Install
+
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+**Or with wget:**
+```bash
+wget -qO- https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+**Custom install directory:**
+```bash
+INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+**Specific version:**
+```bash
+VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+See [Installation](#installation) for more options.
 
 ## Features
 
@@ -54,19 +80,43 @@ A real-time HTTP latency and network quality monitoring tool with an interactive
 
 ## Installation
 
-### Prerequisites
-- Rust 1.92 or later
-- libcurl with HTTP/2 support
+### Quick Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
+```
+
+### Download Binary
+
+Download pre-built binaries from [GitHub Releases](https://github.com/DennySORA/httpulse/releases):
+
+| Platform | Architecture | Download |
+|----------|--------------|----------|
+| Linux | x86_64 | `httpulse-x86_64-unknown-linux-musl.tar.gz` |
+| Linux | ARM64 | `httpulse-aarch64-unknown-linux-musl.tar.gz` |
+| macOS | x86_64 (Intel) | `httpulse-x86_64-apple-darwin.tar.gz` |
+| macOS | ARM64 (Apple Silicon) | `httpulse-aarch64-apple-darwin.tar.gz` |
+| Windows | x86_64 | `httpulse-x86_64-pc-windows-msvc.zip` |
 
 ### Build from Source
 
+**Prerequisites:**
+- Rust 1.92 or later
+- libcurl with HTTP/2 support
+
 ```bash
-git clone https://github.com/yourusername/monitor_network.git
-cd monitor_network
+git clone https://github.com/DennySORA/httpulse.git
+cd httpulse
 cargo build --release
 ```
 
-The binary will be available at `target/release/monitor_network`.
+The binary will be available at `target/release/httpulse`.
+
+### Cargo Install
+
+```bash
+cargo install --git https://github.com/DennySORA/httpulse.git
+```
 
 ## Usage
 
@@ -74,13 +124,13 @@ The binary will be available at `target/release/monitor_network`.
 
 ```bash
 # Monitor default target (google.com)
-./monitor_network
+httpulse
 
 # Monitor specific target
-./monitor_network -t https://example.com
+httpulse -t https://example.com
 
 # Monitor multiple targets
-./monitor_network -t https://google.com -t https://cloudflare.com -t https://github.com
+httpulse -t https://google.com -t https://cloudflare.com -t https://github.com
 ```
 
 ### Command Line Options
