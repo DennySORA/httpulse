@@ -11,11 +11,11 @@ clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 curl = { version = "0.4", features = ["http2"] }
 curl-sys = "0.4"
-crossterm = "0.28"
+crossterm = "0.29"
 hdrhistogram = "7"
 libc = "0.2"
-ratatui = "0.29"
+ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 url = { version = "2", features = ["serde"] }
-uuid = { version = "1.18.1", features = ["v4", "serde"] }
+uuid = { version = "1.19.0", features = ["v4", "serde"] }
