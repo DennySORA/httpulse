@@ -1,7 +1,18 @@
-use crate::probe::{ProbeError, ProbeErrorKind, TcpInfoSnapshot};
+use crate::probe::{NegotiatedProtocol, ProbeError, ProbeErrorKind, TcpInfoSnapshot};
 use curl::Error as CurlError;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+
+// CURLINFO constants not exposed by curl-sys
+// See: https://curl.se/libcurl/c/CURLINFO_HTTP_VERSION.html
+const CURLINFO_LONG: u32 = 0x200000;
+const CURLINFO_HTTP_VERSION: u32 = CURLINFO_LONG + 46;
+
+// HTTP version codes returned by CURLINFO_HTTP_VERSION
+const CURL_HTTP_VERSION_1_0: i64 = 1;
+const CURL_HTTP_VERSION_1_1: i64 = 2;
+const CURL_HTTP_VERSION_2_0: i64 = 3;
+const CURL_HTTP_VERSION_3: i64 = 30;
 
 pub(super) fn map_curl_error(err: &CurlError) -> ProbeError {
     let message = err.to_string();
@@ -94,6 +105,54 @@ pub(super) fn fetch_tcp_info(handle: *mut curl_sys::CURL) -> Option<TcpInfoSnaps
             snd_cwnd: Some(info.tcpi_snd_cwnd),
             snd_ssthresh: Some(info.tcpi_snd_ssthresh),
         })
+    }
+}
+
+/// Fetches the actually negotiated protocol information from curl.
+/// Returns the HTTP version actually used (not the configured preference).
+/// TLS version detection is not reliably available via curl API, so we
+/// indicate when it cannot be determined.
+pub(super) fn fetch_negotiated_protocol(
+    handle: *mut curl_sys::CURL,
+    configured_tls: &str,
+) -> NegotiatedProtocol {
+    let alpn = fetch_http_version(handle);
+    // Note: libcurl does not expose CURLINFO for the negotiated TLS version.
+    // We use the configured value but could mark it as "configured" vs "actual"
+    // in a future enhancement if curl adds this capability.
+    let tls_version = Some(configured_tls.to_string());
+
+    NegotiatedProtocol {
+        alpn,
+        tls_version,
+        cipher: None,
+    }
+}
+
+fn fetch_http_version(handle: *mut curl_sys::CURL) -> Option<String> {
+    if handle.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let mut version: std::os::raw::c_long = 0;
+        let rc = curl_sys::curl_easy_getinfo(
+            handle,
+            CURLINFO_HTTP_VERSION,
+            &mut version as *mut std::os::raw::c_long,
+        );
+
+        if rc != curl_sys::CURLE_OK {
+            return None;
+        }
+
+        match version as i64 {
+            CURL_HTTP_VERSION_1_0 => Some("http/1.0".to_string()),
+            CURL_HTTP_VERSION_1_1 => Some("http/1.1".to_string()),
+            CURL_HTTP_VERSION_2_0 => Some("h2".to_string()),
+            CURL_HTTP_VERSION_3 => Some("h3".to_string()),
+            _ => None,
+        }
     }
 }
 

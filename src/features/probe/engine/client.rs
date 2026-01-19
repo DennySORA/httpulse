@@ -1,9 +1,10 @@
 use super::helpers::{
-    fetch_tcp_info, is_dns_timeout_message, map_curl_error, parse_socket_addr, saturating_sub,
+    fetch_negotiated_protocol, fetch_tcp_info, is_dns_timeout_message, map_curl_error,
+    parse_socket_addr, saturating_sub,
 };
 use crate::config::{ConnReusePolicy, HttpVersion, ProfileConfig, TargetConfig, TlsVersion};
 use crate::probe::{
-    EbpfConnStatsDelta, NegotiatedProtocol, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample,
+    EbpfConnStatsDelta, ProbeError, ProbeErrorKind, ProbeResult, ProbeSample,
 };
 use curl::Error as CurlError;
 use curl::easy::{
@@ -235,18 +236,11 @@ impl ProbeClient {
 
         let downloaded_bytes = self.easy.get_ref().bytes;
 
-        // let negotiated = fetch_negotiated_protocol(self.easy.raw());
-        let negotiated = NegotiatedProtocol {
-            alpn: Some(match profile.http {
-                HttpVersion::H1 => "http/1.1".to_string(),
-                HttpVersion::H2 => "h2".to_string(),
-            }),
-            tls_version: Some(match profile.tls {
-                TlsVersion::Tls12 => "TLSv1.2".to_string(),
-                TlsVersion::Tls13 => "TLSv1.3".to_string(),
-            }),
-            cipher: None,
+        let configured_tls = match profile.tls {
+            TlsVersion::Tls12 => "TLSv1.2",
+            TlsVersion::Tls13 => "TLSv1.3",
         };
+        let negotiated = fetch_negotiated_protocol(self.easy.raw(), configured_tls);
 
         let local = parse_socket_addr(
             self.easy.local_ip().ok().flatten(),
