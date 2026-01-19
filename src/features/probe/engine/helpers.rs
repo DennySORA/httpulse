@@ -5,8 +5,9 @@ use std::time::Duration;
 
 // CURLINFO constants not exposed by curl-sys
 // See: https://curl.se/libcurl/c/CURLINFO_HTTP_VERSION.html
-const CURLINFO_LONG: u32 = 0x200000;
-const CURLINFO_HTTP_VERSION: u32 = CURLINFO_LONG + 46;
+// Use curl_sys::CURLINFO type for cross-platform compatibility (i32 on Windows, u32 on Unix)
+const CURLINFO_LONG: curl_sys::CURLINFO = 0x200000;
+const CURLINFO_HTTP_VERSION: curl_sys::CURLINFO = CURLINFO_LONG + 46;
 
 // HTTP version codes returned by CURLINFO_HTTP_VERSION
 const CURL_HTTP_VERSION_1_0: i64 = 1;
