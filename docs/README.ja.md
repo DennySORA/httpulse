@@ -20,10 +20,9 @@
 curl -fsSL https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
 ```
 
-**wget を使用：**
-```bash
-wget -qO- https://raw.githubusercontent.com/DennySORA/httpulse/main/install.sh | bash
-```
+**Windows：**
+
+[`httpulse-x86_64-pc-windows-msvc.zip`](https://github.com/DennySORA/httpulse/releases/latest/download/httpulse-x86_64-pc-windows-msvc.zip) をダウンロードし、解凍して `httpulse.exe` を実行してください。
 
 詳細は [インストール](#インストール) セクションを参照してください。
 
